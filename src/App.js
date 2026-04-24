@@ -73,6 +73,40 @@ const DEF_T = {1:3200,2:4000,3:1800,5:220,6:450};
 const DEF_PF = [{id:1,name:'Main Portfolio',holdings:DEF_H,targets:DEF_T}];
 const TWEAK_DEF = {darkMode:true,autoRefreshMins:5,compactRows:false,showCharts:true,glowIntensity:60};
 
+// ── GROQ API ──────────────────────────────────────────────────────────────────
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+async function callGroq(apiKey, prompt) {
+  if (!apiKey) throw new Error('No API key');
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 1024,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || '';
+}
+
+function extractJSON(text) {
+  try {
+    const m = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\{[\s\S]*\})/);
+    return m ? JSON.parse(m[1].trim()) : JSON.parse(text.trim());
+  } catch { return null; }
+}
+
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const isUS    = s => !s.endsWith('.NS') && !s.endsWith('.BO');
 const short   = s => s.replace('.NS','').replace('.BO','');
@@ -303,7 +337,7 @@ function PriceChart({history,buyPrice,analystTarget,currency,T}) {
 }
 
 // ── STOCK DETAIL VIEW ─────────────────────────────────────────────────────────
-function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRefresh,onRangeChange,T}) {
+function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRefresh,onRangeChange,groqKey,groqAnalysis,onGroqRefresh,T}) {
   const p=prices[symbol],currency=p?.currency||(isUS(symbol)?'USD':'INR'),curPrice=p?.current??null;
   const dayChange=p?((p.current-p.prev)/p.prev)*100:null;
   const invested=holding?holding.buyPrice*holding.qty:null;
@@ -380,14 +414,14 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
           </div>
           <div style={{padding:'4px 16px 12px'}}>
             {[
-              {l:'Market Cap',v:fmtBig(priceData.marketCap?.raw??priceData.marketCap,currency)},
-              {l:'P/E (TTM)',v:stats.trailingPE?.raw!=null?stats.trailingPE.raw.toFixed(1):'—'},
-              {l:'EPS (TTM)',v:keyStats.trailingEps?.raw!=null?fmt(keyStats.trailingEps.raw,currency):'—'},
-              {l:'52W High',v:stats.fiftyTwoWeekHigh?.raw!=null?fmt(stats.fiftyTwoWeekHigh.raw,currency):'—'},
-              {l:'52W Low',v:stats.fiftyTwoWeekLow?.raw!=null?fmt(stats.fiftyTwoWeekLow.raw,currency):'—'},
-              {l:'Volume',v:priceData.regularMarketVolume?.raw!=null?`${(priceData.regularMarketVolume.raw/1e6).toFixed(2)}M`:'—'},
-              {l:'Beta',v:stats.beta?.raw!=null?stats.beta.raw.toFixed(2):'—'},
-              {l:'Div Yield',v:stats.dividendYield?.raw!=null?`${(stats.dividendYield.raw*100).toFixed(2)}%`:'—'},
+              {l:'Market Cap',v:fmtBig(priceData.marketCap,currency)},
+              {l:'P/E (TTM)',v:stats.trailingPE!=null?Number(stats.trailingPE).toFixed(1):'—'},
+              {l:'EPS (TTM)',v:keyStats.trailingEps!=null?fmt(keyStats.trailingEps,currency):'—'},
+              {l:'52W High',v:stats.fiftyTwoWeekHigh!=null?fmt(stats.fiftyTwoWeekHigh,currency):'—'},
+              {l:'52W Low',v:stats.fiftyTwoWeekLow!=null?fmt(stats.fiftyTwoWeekLow,currency):'—'},
+              {l:'Volume',v:priceData.regularMarketVolume!=null?`${(priceData.regularMarketVolume/1e6).toFixed(2)}M`:'—'},
+              {l:'Beta',v:stats.beta!=null?Number(stats.beta).toFixed(2):'—'},
+              {l:'Div Yield',v:stats.dividendYield!=null?`${(stats.dividendYield*100).toFixed(2)}%`:'—'},
             ].map(({l,v},i)=><InfoRow key={i} l={l} v={v}/>)}
           </div>
         </div>
@@ -404,7 +438,7 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
               {recKey?<div style={{display:'flex',flexDirection:'column',gap:6}}>
                 <span style={{fontSize:14,fontWeight:700,color:recColor,textTransform:'capitalize'}}>{recKey.replace(/([A-Z])/g,' $1').trim()}</span>
                 {totalAna>0&&<div style={{fontSize:11,color:T.text3}}>{(recTrend.strongBuy||0)+(recTrend.buy||0)} Buy · {recTrend.hold||0} Hold · {(recTrend.sell||0)+(recTrend.strongSell||0)} Sell ({totalAna} analysts)</div>}
-                {finData.targetMeanPrice?.raw&&<div style={{fontSize:12,color:T.text2}}>Mean target: <strong style={{color:T.text}}>{fmt(finData.targetMeanPrice.raw,currency)}</strong></div>}
+                {finData.targetMeanPrice&&<div style={{fontSize:12,color:T.text2}}>Mean target: <strong style={{color:T.text}}>{fmt(finData.targetMeanPrice,currency)}</strong></div>}
               </div>:<span style={{color:T.text3,fontSize:12,fontStyle:'italic'}}>No data available</span>}
             </div>
           </div>
@@ -437,6 +471,10 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
             </table>
           </div>
         </div>
+      )}
+      {/* Groq AI Analysis */}
+      {groqKey&&(
+        <GroqAnalysis symbol={symbol} name={holding?.name} curPrice={curPrice} currency={currency} holding={holding} analysis={groqAnalysis} onRefresh={onGroqRefresh} T={T}/>
       )}
     </div>
   );
@@ -571,6 +609,152 @@ function CSVImportModal({onImport,onClose,market,T}) {
   );
 }
 
+// ── GROQ SETUP MODAL ─────────────────────────────────────────────────────────
+function GroqSetupModal({onSave,T}) {
+  const [key,setKey]=useState('');
+  const [testing,setTesting]=useState(false);
+  const [status,setStatus]=useState(null);
+  const [errMsg,setErrMsg]=useState('');
+
+  const test=async()=>{
+    if(!key.trim()){setStatus('err');setErrMsg('Enter an API key first.');return;}
+    setTesting(true);setStatus(null);
+    try{
+      await callGroq(key.trim(),'Reply with exactly: OK');
+      setStatus('ok');
+    }catch(e){setStatus('err');setErrMsg(e.message);}
+    setTesting(false);
+  };
+
+  return(
+    <div style={{position:'fixed',inset:0,zIndex:3000,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,.75)',backdropFilter:'blur(6px)'}}>
+      <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border2}`,width:500,maxWidth:'92vw',boxShadow:'0 32px 80px rgba(0,0,0,.6)',overflow:'hidden'}}>
+        {/* Header */}
+        <div style={{background:'linear-gradient(135deg,#1a1a2e,#0d1117)',padding:'24px 28px',borderBottom:`1px solid ${T.border}`}}>
+          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:10}}>
+            <div style={{width:44,height:44,borderRadius:10,background:'linear-gradient(135deg,#f55036,#ff8c00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>⚡</div>
+            <div>
+              <div style={{fontSize:18,fontWeight:700,color:'#fff',letterSpacing:'-.01em'}}>Enable Groq AI</div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,.5)',marginTop:2}}>Powered by Llama 3.3 70B on Groq</div>
+            </div>
+          </div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,.6)',lineHeight:1.6}}>
+            Groq adds AI-powered stock analysis using Llama 3.3 70B — the fastest free AI API available. Your key is stored locally and only sent to Groq's servers.
+          </div>
+        </div>
+        {/* Body */}
+        <div style={{padding:'24px 28px',display:'flex',flexDirection:'column',gap:16}}>
+          <div style={{background:T.surface2,borderRadius:8,padding:'14px 16px',border:`1px solid ${T.border}`,fontSize:12,color:T.text2,lineHeight:1.7}}>
+            <div style={{fontWeight:700,color:T.text,marginBottom:6,display:'flex',alignItems:'center',gap:6}}>⚡ What Groq AI enables</div>
+            <div>• <b style={{color:T.accent}}>AI Stock Analysis</b> — instant sentiment, risks & opportunities</div>
+            <div>• <b style={{color:T.accent}}>Portfolio Insights</b> — AI commentary on your holdings</div>
+            <div>• <b style={{color:T.accent}}>14,400 free requests/day</b> — no credit card needed</div>
+            <div style={{marginTop:6,color:T.text3}}>Model: <b>Llama 3.3 70B</b> · Provider: <b>Groq</b> · Latency: &lt;1 second</div>
+          </div>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Groq API Key</div>
+            <div style={{display:'flex',gap:8}}>
+              <NvInput value={key} onChange={e=>setKey(e.target.value)} placeholder="gsk_…" T={T} style={{fontFamily:'monospace',fontSize:12}}/>
+              <NvBtn onClick={test} disabled={testing} T={T}>{testing?'Testing…':'Test Key'}</NvBtn>
+            </div>
+            {status==='ok'&&<div style={{fontSize:11,color:T.success,marginTop:6}}>✓ Key verified — Groq is ready</div>}
+            {status==='err'&&<div style={{fontSize:11,color:T.danger,marginTop:6}}>✗ {errMsg}</div>}
+            <div style={{fontSize:11,color:T.text3,marginTop:6}}>
+              Get a free key at <b>console.groq.com</b> → API Keys → Create API Key. No credit card needed.
+            </div>
+          </div>
+        </div>
+        {/* Footer */}
+        <div style={{padding:'16px 28px',borderTop:`1px solid ${T.border}`,display:'flex',gap:10,justifyContent:'flex-end',background:T.surface2}}>
+          <NvBtn onClick={()=>onSave('')} T={T}>Skip — Use Yahoo Finance only</NvBtn>
+          <NvBtn onClick={()=>{if(key.trim())onSave(key.trim());}} variant="primary" disabled={!key.trim()} T={T}>Save Key & Enable Groq</NvBtn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── GROQ ANALYSIS PANEL ──────────────────────────────────────────────────────
+function GroqAnalysis({symbol,name,curPrice,currency,holding,analysis,onRefresh,T}) {
+  const loading=analysis?.loading;
+  const data=analysis?.data;
+  const err=analysis?.error;
+
+  const sentColor=s=>s?.toLowerCase().includes('bullish')?T.success:s?.toLowerCase().includes('bearish')?T.danger:T.warning;
+
+  return(
+    <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+      {/* Header */}
+      <div style={{padding:'12px 18px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:`linear-gradient(90deg,rgba(66,133,244,.08),transparent)`}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:28,height:28,borderRadius:6,background:'linear-gradient(135deg,#f55036,#ff8c00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>⚡</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:T.text}}>Groq AI Analysis</div>
+            <div style={{fontSize:10,color:T.text3}}>Llama 3.3 70B · Groq</div>
+          </div>
+          {data?.sentiment&&<span style={{padding:'3px 10px',borderRadius:20,background:`${sentColor(data.sentiment)}18`,color:sentColor(data.sentiment),fontSize:11,fontWeight:700,marginLeft:4}}>{data.sentiment}</span>}
+        </div>
+        <NvBtn onClick={onRefresh} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Analysing…':'Re-analyse'}</NvBtn>
+      </div>
+      {/* Content */}
+      <div style={{padding:'16px 18px'}}>
+        {loading&&!data&&(
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {[90,70,80,60].map((w,i)=><div key={i} style={{height:12,borderRadius:4,background:T.surface4,width:`${w}%`,animation:'pulse 1.5s infinite'}}/>)}
+          </div>
+        )}
+        {err&&!data&&<div style={{color:T.danger,fontSize:12,padding:'8px 0'}}>{err}</div>}
+        {data&&(
+          <div style={{display:'flex',flexDirection:'column',gap:16}}>
+            {data.overview&&(
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Overview</div>
+                <div style={{fontSize:13,color:T.text,lineHeight:1.65}}>{data.overview}</div>
+              </div>
+            )}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              {data.opportunities?.length>0&&(
+                <div style={{background:T.successBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.success}20`}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.success,marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Opportunities</div>
+                  {(Array.isArray(data.opportunities)?data.opportunities:[data.opportunities]).map((o,i)=>(
+                    <div key={i} style={{display:'flex',gap:6,fontSize:12,color:T.text,marginBottom:i<data.opportunities.length-1?5:0}}>
+                      <span style={{color:T.success,flexShrink:0}}>▲</span>{o}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {data.risks?.length>0&&(
+                <div style={{background:T.dangerBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.danger}20`}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.danger,marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Risks</div>
+                  {(Array.isArray(data.risks)?data.risks:[data.risks]).map((r,i)=>(
+                    <div key={i} style={{display:'flex',gap:6,fontSize:12,color:T.text,marginBottom:i<data.risks.length-1?5:0}}>
+                      <span style={{color:T.danger,flexShrink:0}}>▼</span>{r}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {data.performance&&(
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Recent Performance</div>
+                <div style={{fontSize:12,color:T.text2,lineHeight:1.65}}>{data.performance}</div>
+              </div>
+            )}
+            {holding&&data.positionComment&&(
+              <div style={{background:T.accentBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.accent}20`}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.accent,marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Your Position</div>
+                <div style={{fontSize:12,color:T.text,lineHeight:1.65}}>{data.positionComment}</div>
+              </div>
+            )}
+            {data.disclaimer&&<div style={{fontSize:10,color:T.text3,fontStyle:'italic',marginTop:-4}}>{data.disclaimer}</div>}
+          </div>
+        )}
+        {!loading&&!data&&!err&&<div style={{color:T.text3,fontSize:12,padding:'8px 0',textAlign:'center'}}>Click Re-analyse to generate AI insights for this stock.</div>}
+      </div>
+    </div>
+  );
+}
+
 // ── HOLDINGS TABLE ────────────────────────────────────────────────────────────
 function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnpledged,onRemove,fetchPrices,loading,error,lastUpdated,compact,onImportCSV,addHolding,onRowClick,T}) {
   const [sort,setSort]=useState({col:'allocPct',dir:'desc'});
@@ -686,7 +870,6 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
                       <div>
                         <div style={{fontWeight:700,color:T.text,fontSize:12}}>{short(r.symbol)}</div>
                         <div style={{fontSize:10,color:T.text3,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}</div>
-                        <div style={{fontSize:9,color:T.accent,marginTop:1,opacity:.6}}>View details →</div>
                       </div>
                     </div>
                   </td>
@@ -719,16 +902,27 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
 }
 
 // ── SETTINGS PANEL ────────────────────────────────────────────────────────────
-function SettingsPanel({tweaks,onUpdate,onClose,T}) {
+function SettingsPanel({tweaks,onUpdate,onClose,groqKey,onSaveGroqKey,T}) {
+  const [keyEdit,setKeyEdit]=useState(false);
+  const [newKey,setNewKey]=useState('');
+  const [testing,setTesting]=useState(false);
+  const [testResult,setTestResult]=useState(null);
+  const testKey=async()=>{
+    setTesting(true);setTestResult(null);
+    try{await callGroq(newKey.trim(),'Reply OK');setTestResult('ok');}
+    catch(e){setTestResult(e.message);}
+    setTesting(false);
+  };
   return(
     <div style={{position:'fixed',inset:0,zIndex:1500,display:'flex',alignItems:'flex-start',justifyContent:'flex-end',paddingTop:52}}>
       <div onClick={onClose} style={{position:'absolute',inset:0}}/>
-      <div style={{position:'relative',width:300,background:T.surface,borderRadius:T.r,border:`1px solid ${T.border2}`,boxShadow:'0 16px 48px rgba(0,0,0,.4)',margin:'8px 8px 0 0',overflow:'hidden'}}>
+      <div style={{position:'relative',width:320,background:T.surface,borderRadius:T.r,border:`1px solid ${T.border2}`,boxShadow:'0 16px 48px rgba(0,0,0,.4)',margin:'8px 8px 0 0',overflow:'hidden'}}>
         <div style={{padding:'14px 18px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <span style={{fontSize:14,fontWeight:700,color:T.text}}>Settings</span>
           <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,display:'flex',padding:4}}><Ic.X/></button>
         </div>
-        <div style={{padding:'14px 18px',display:'flex',flexDirection:'column',gap:14}}>
+        <div style={{padding:'14px 18px',display:'flex',flexDirection:'column',gap:14,maxHeight:'80vh',overflowY:'auto'}}>
+          {/* Toggles */}
           {[{label:'Dark Mode',key:'darkMode'},{label:'Compact Rows',key:'compactRows'},{label:'Show P&L Charts',key:'showCharts'}].map(({label,key})=>(
             <div key={key} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span style={{fontSize:13,color:T.text2}}>{label}</span>
@@ -740,6 +934,31 @@ function SettingsPanel({tweaks,onUpdate,onClose,T}) {
           <div style={{display:'flex',flexDirection:'column',gap:6}}>
             <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:13,color:T.text2}}>Auto Refresh</span><span style={{fontSize:13,fontWeight:600,color:T.accent}}>{tweaks.autoRefreshMins} min</span></div>
             <input type="range" min={1} max={30} step={1} value={tweaks.autoRefreshMins} onChange={e=>onUpdate('autoRefreshMins',parseInt(e.target.value))} style={{accentColor:T.accent}}/>
+          </div>
+          {/* Groq Section */}
+          <div style={{borderTop:`1px solid ${T.border}`,paddingTop:14}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+              <div style={{width:22,height:22,borderRadius:5,background:'linear-gradient(135deg,#f55036,#ff8c00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11}}>⚡</div>
+              <span style={{fontSize:13,fontWeight:700,color:T.text}}>Groq AI</span>
+              {groqKey?<span style={{fontSize:10,background:T.successBg,color:T.success,padding:'2px 7px',borderRadius:10,fontWeight:700}}>Active</span>:<span style={{fontSize:10,background:T.surface3,color:T.text3,padding:'2px 7px',borderRadius:10}}>Inactive — Yahoo only</span>}
+            </div>
+            {!keyEdit?(
+              <div style={{display:'flex',gap:8}}>
+                <NvBtn onClick={()=>{setNewKey(groqKey||'');setKeyEdit(true);setTestResult(null);}} T={T}>{groqKey?'Update Key':'Add Key'}</NvBtn>
+                {groqKey&&<NvBtn onClick={()=>onSaveGroqKey('')} variant="danger" T={T}>Remove</NvBtn>}
+              </div>
+            ):(
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                <NvInput value={newKey} onChange={e=>setNewKey(e.target.value)} placeholder="AIza…" T={T} style={{fontFamily:'monospace',fontSize:11}}/>
+                {testResult==='ok'&&<span style={{fontSize:11,color:T.success}}>✓ Key works</span>}
+                {testResult&&testResult!=='ok'&&<span style={{fontSize:11,color:T.danger}}>✗ {testResult}</span>}
+                <div style={{display:'flex',gap:6}}>
+                  <NvBtn onClick={testKey} disabled={testing||!newKey.trim()} T={T}>{testing?'Testing…':'Test'}</NvBtn>
+                  <NvBtn onClick={()=>{if(newKey.trim())onSaveGroqKey(newKey.trim());setKeyEdit(false);}} variant="primary" disabled={!newKey.trim()} T={T}>Save</NvBtn>
+                  <NvBtn onClick={()=>setKeyEdit(false)} T={T}>Cancel</NvBtn>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -753,7 +972,7 @@ function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T})
   const commit=()=>{if(editName.trim())onRename(editId,editName.trim());setEditId(null);};
   useEffect(()=>{if(editId&&inputRef.current)inputRef.current.focus();},[editId]);
   return(
-    <div style={{display:'flex',alignItems:'center',gap:4,padding:'0 24px',borderBottom:`1px solid ${T.border}`,background:T.surface,height:38,flexShrink:0,overflowX:'auto'}}>
+    <div style={{display:'flex',alignItems:'center',gap:4,padding:'0 20px',borderBottom:`1px solid ${T.border}`,background:T.surface,height:38,flexShrink:0,overflowX:'auto',position:'relative',zIndex:10}}>
       {portfolios.map((p,i)=>{const active=p.id===activeId,color=PORT_COLORS[i%PORT_COLORS.length];return(
         <div key={p.id} onClick={()=>onSwitch(p.id)} style={{display:'flex',alignItems:'center',gap:6,height:38,padding:'0 14px',cursor:'pointer',flexShrink:0,userSelect:'none',borderBottom:active?`2px solid ${color}`:'2px solid transparent',color:active?T.text:T.text3,transition:'all .15s',fontSize:12,fontWeight:active?600:400}}>
           {editId===p.id?<input ref={inputRef} value={editName} onChange={e=>setEditName(e.target.value)} onBlur={commit} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Enter')commit();if(e.key==='Escape')setEditId(null);}} style={{width:100,padding:'1px 6px',background:T.surface3,color:T.text,fontSize:12,border:`1px solid ${color}`,borderRadius:4,outline:'none'}}/>
@@ -784,6 +1003,13 @@ export default function App() {
   const [mainTab,setMainTab]=useState('IN');
   const [openStockTabs,setOpenStockTabs]=useState([]);
   const [stockDetails,setStockDetails]=useState({});
+
+  // Groq AI state
+  const [groqKey,setGroqKey]=useState(()=>localStorage.getItem('pm_groq_key')); // null=never asked, ''=skipped
+  const [showGroqSetup,setShowGroqSetup]=useState(()=>localStorage.getItem('pm_groq_key')===null);
+  const [groqAnalyses,setGroqAnalyses]=useState({}); // {symbol: {loading, data, error}}
+
+  const saveGroqKey=k=>{localStorage.setItem('pm_groq_key',k);setGroqKey(k);setShowGroqSetup(false);};
   const activePf=useMemo(()=>portfolios.find(p=>p.id===activeId)||portfolios[0],[portfolios,activeId]);
   const holdings=activePf?.holdings??[],targets=activePf?.targets??{};
   const setHoldings=fn=>setPortfolios(ps=>ps.map(p=>p.id===activeId?{...p,holdings:typeof fn==='function'?fn(p.holdings):fn}:p));
@@ -810,16 +1036,107 @@ export default function App() {
   const fetchStockDetail=useCallback(async(symbol,range='3mo')=>{
     setStockDetails(prev=>({...prev,[symbol]:{...prev[symbol],loading:true,range}}));
     try{
-      const [cRes,sRes]=await Promise.all([
-        fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`,{headers:{Accept:'application/json'}}),
-        fetch(`https://query1.finance.yahoo.com/v11/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=summaryDetail,defaultKeyStatistics,financialData,price,recommendationTrend`,{headers:{Accept:'application/json'}}),
-      ]);
-      const cj=await cRes.json(),sj=await sRes.json();
-      const result=cj?.chart?.result?.[0],ts=result?.timestamp||[],q=result?.indicators?.quote?.[0]||{};
-      const history=ts.map((t,i)=>({date:t*1000,open:q.open?.[i],high:q.high?.[i],low:q.low?.[i],close:q.close?.[i],volume:q.volume?.[i],change:i>0&&q.close?.[i-1]?((q.close[i]-q.close[i-1])/q.close[i-1])*100:0})).filter(d=>d.close!=null);
-      setStockDetails(prev=>({...prev,[symbol]:{history,summary:sj?.quoteSummary?.result?.[0]||{},loading:false,error:null,range}}));
-    }catch{setStockDetails(prev=>({...prev,[symbol]:{history:[],summary:{},loading:false,error:'Failed',range}}));}
+      // ── 1. Chart API — history + meta (52W, marketCap, volume) ──────────────
+      const chartRes=await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}&includePrePost=false`,
+        {headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}}
+      );
+      const cj=await chartRes.json();
+      const result=cj?.chart?.result?.[0]||{};
+      const meta=result.meta||{};
+      const ts=result.timestamp||[],q=result.indicators?.quote?.[0]||{};
+      const history=ts.map((t,i)=>({
+        date:t*1000,open:q.open?.[i],high:q.high?.[i],low:q.low?.[i],close:q.close?.[i],volume:q.volume?.[i],
+        change:i>0&&q.close?.[i-1]?((q.close[i]-q.close[i-1])/q.close[i-1])*100:0,
+      })).filter(d=>d.close!=null);
+
+      // ── 2. v7 Quote API — P/E, EPS, Beta, Div Yield (no cookie needed) ─────
+      let quoteData={};
+      try{
+        // No &fields= param — it filters OUT fields on some Yahoo endpoints
+        const qRes=await fetch(
+          `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US&corsDomain=finance.yahoo.com`,
+          {headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}}
+        );
+        if(qRes.ok){
+          const qj=await qRes.json();
+          quoteData=qj?.quoteResponse?.result?.[0]||{};
+        }
+        // Fallback to query2 if query1 returned empty
+        if(!quoteData.symbol){
+          const q2=await fetch(
+            `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US`,
+            {headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}}
+          );
+          if(q2.ok){const j=await q2.json();quoteData=j?.quoteResponse?.result?.[0]||{};}
+        }
+      }catch{/* quoteData stays empty */}
+
+      // ── 3. Build normalised summary from both sources ────────────────────────
+      const n=v=>v==null?null:(typeof v==='object'&&'raw' in v?v.raw:v);
+      // Yahoo returns beta as 'beta' or 'beta3Year' depending on endpoint/region
+      const betaVal=n(quoteData.beta)??n(quoteData.beta3Year)??n(meta.beta);
+      // Div yield: Yahoo returns as decimal (0.005 = 0.5%) or already pct
+      const divRaw=n(quoteData.trailingAnnualDividendYield)??n(quoteData.dividendYield);
+      const summary={
+        price:{
+          marketCap:            n(quoteData.marketCap)           ?? n(meta.marketCap),
+          regularMarketVolume:  n(quoteData.regularMarketVolume) ?? n(meta.regularMarketVolume),
+          shortName:            quoteData.shortName               ?? meta.shortName,
+          recommendationKey:    quoteData.recommendationKey,
+          targetMeanPrice:      n(quoteData.targetMeanPrice),
+        },
+        summaryDetail:{
+          trailingPE:       n(quoteData.trailingPE),
+          fiftyTwoWeekHigh: n(quoteData.fiftyTwoWeekHigh) ?? n(meta.fiftyTwoWeekHigh),
+          fiftyTwoWeekLow:  n(quoteData.fiftyTwoWeekLow)  ?? n(meta.fiftyTwoWeekLow),
+          beta:             betaVal,
+          dividendYield:    divRaw,
+        },
+        defaultKeyStatistics:{
+          trailingEps:             n(quoteData.epsTrailingTwelveMonths),
+          numberOfAnalystOpinions: n(quoteData.numberOfAnalystOpinions),
+        },
+        financialData:{
+          recommendationKey: quoteData.recommendationKey,
+          targetMeanPrice:   n(quoteData.targetMeanPrice),
+        },
+        recommendationTrend: null,
+      };
+
+      setStockDetails(prev=>({...prev,[symbol]:{history,summary,loading:false,error:null,range}}));
+    }catch(e){
+      setStockDetails(prev=>({...prev,[symbol]:{history:[],summary:{},loading:false,error:'Failed to load data',range}}));
+    }
   },[]);
+  const fetchGroqAnalysis=useCallback(async(symbol,holding,curPrice,currency)=>{
+    if(!groqKey)return;
+    setGroqAnalyses(prev=>({...prev,[symbol]:{...prev[symbol],loading:true,error:null}}));
+    const positionCtx=holding
+      ?`The user holds ${holding.qty} shares bought at ${currency==='INR'?'₹':'$'}${holding.buyPrice}. Current price: ${currency==='INR'?'₹':'$'}${curPrice?.toFixed(2)??'unknown'}.`
+      :'The user does not currently hold this stock.';
+    const prompt=`You are a concise financial analyst. Analyse the stock ${symbol} (${holding?.name||symbol}).
+${positionCtx}
+Respond ONLY with a JSON object (no markdown fences) with these exact keys:
+{
+  "overview": "2-sentence company description",
+  "sentiment": "Bullish | Neutral | Bearish",
+  "performance": "2-sentence recent performance summary",
+  "opportunities": ["point 1", "point 2", "point 3"],
+  "risks": ["risk 1", "risk 2", "risk 3"],
+  "positionComment": "1 sentence about user position or null if not held",
+  "disclaimer": "Not financial advice. For informational purposes only."
+}`;
+    try{
+      const text=await callGroq(groqKey,prompt,false);
+      const data=extractJSON(text);
+      if(data)setGroqAnalyses(prev=>({...prev,[symbol]:{loading:false,data,error:null}}));
+      else setGroqAnalyses(prev=>({...prev,[symbol]:{loading:false,data:null,error:'Could not parse AI response.'}}));
+    }catch(e){
+      setGroqAnalyses(prev=>({...prev,[symbol]:{loading:false,data:null,error:`Groq error: ${e.message}`}}));
+    }
+  },[groqKey]);
+
   const openStockTab=useCallback((symbol)=>{
     if(!openStockTabs.find(t=>t.symbol===symbol))setOpenStockTabs(prev=>[...prev,{symbol}]);
     setMainTab(`stock:${symbol}`);
@@ -913,7 +1230,7 @@ export default function App() {
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.0</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.1 · Groq</div>
           </div>
         </div>
 
@@ -954,7 +1271,7 @@ export default function App() {
       <div style={{flex:1,overflow:'hidden',display:'flex'}}>
 
         {/* Left Sidebar */}
-        <div style={{width:200,background:T.sidebar,borderRight:`1px solid ${T.border}`,display:'flex',flexDirection:'column',flexShrink:0,overflowY:'auto'}}>
+        <div style={{width:160,background:T.sidebar,borderRight:`1px solid ${T.border}`,display:'flex',flexDirection:'column',flexShrink:0,overflowY:'auto'}}>
           <div style={{padding:'16px 12px 8px',fontSize:10,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.08em'}}>Portfolios</div>
           {/* Main nav: IN | US */}
           {NAV.map(nav=>{
@@ -988,7 +1305,8 @@ export default function App() {
         {/* Main Content */}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
           {activeStock?(
-            <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} T={T}/>
+            <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)}
+            groqKey={groqKey} groqAnalysis={groqAnalyses[activeStock]} onGroqRefresh={()=>{const r=rows.find(r=>r.symbol===activeStock);fetchGroqAnalysis(activeStock,r,r?.curPrice,r?.currency);}} T={T}/>
           ):(
             <>
               {/* Portfolio sub-tabs */}
@@ -1011,7 +1329,8 @@ export default function App() {
         </div>
       </div>
 
-      {showSettings&&<SettingsPanel tweaks={tweaks} onUpdate={(k,v)=>setTweaks(p=>({...p,[k]:v}))} onClose={()=>setShowSettings(false)} T={T}/>}
+      {showGroqSetup&&<GroqSetupModal onSave={saveGroqKey} T={T}/>}
+      {showSettings&&<SettingsPanel tweaks={tweaks} onUpdate={(k,v)=>setTweaks(p=>({...p,[k]:v}))} onClose={()=>setShowSettings(false)} groqKey={groqKey} onSaveGroqKey={saveGroqKey} T={T}/>}
       {importModal&&<CSVImportModal market={importModal} onImport={importHoldings} onClose={()=>setImportModal(null)} T={T}/>}
     </div>
   );

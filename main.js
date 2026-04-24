@@ -28,7 +28,7 @@ function createWindow() {
     minHeight: 600,
     frame:     false,          // Custom Orbitron title bar drawn in React
     show:      false,          // Avoid white flash before content loads
-    backgroundColor: '#020408',
+    backgroundColor: '#0a0a0a',
     webPreferences: {
       preload:          path.join(__dirname, 'preload.js'),
       nodeIntegration:  false,
