@@ -1,0 +1,76 @@
+{
+  "name": "stock-portfolio-desktop",
+  "version": "3.0.0",
+  "description": "Stock Portfolio Monitor for Windows 11",
+  "author": "Arun Verma <arunmcops@gmail.com>",
+  "main": "main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "electron .",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^41.2.2",
+    "electron-builder": "^26.8.1",
+    "vite": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.portfolio.desktop",
+    "productName": "Stock Portfolio Monitor",
+    "asar": true,
+    "compression": "maximum",
+    "files": [
+      "build/**/*",
+      "main.js",
+      "preload.js"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "shortcutName": "Portfolio Manager",
+      "runAfterFinish": true,
+      "perMachine": false
+    },
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "arunniperk",
+        "repo": "stock-portfolio-desktop",
+        "private": false
+      }
+    ]
+  }
+}
