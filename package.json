@@ -1,6 +1,6 @@
 {
   "name": "stock-portfolio-desktop",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "Stock Portfolio Monitor for Windows 11",
   "author": "Arun Verma <arunmcops@gmail.com>",
   "main": "main.js",
@@ -13,7 +13,8 @@
   "dependencies": {
     "electron-updater": "^6.3.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.0",

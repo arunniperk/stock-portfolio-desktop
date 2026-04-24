@@ -1,4 +1,40 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import * as XLSX from 'xlsx';
+
+// ── ERROR BOUNDARY ────────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  componentDidCatch(e,info){console.error('Portfolio Manager error:',e,info);}
+  render(){
+    if(!this.state.error)return this.props.children;
+    const T=this.props.theme||{bg:'#0a0a0a',surface:'#161616',surface2:'#1c1c1c',text:'#fff',text2:'#a0a0a0',text3:'#606060',accent:'#76b900',danger:'#f44336',border:'#2a2a2a',r:8};
+    return(
+      <div style={{height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:T.bg,flexDirection:'column',gap:16,padding:32}}>
+        <div style={{width:56,height:56,borderRadius:12,background:'rgba(244,67,54,.15)',border:'1px solid rgba(244,67,54,.3)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>⚠</div>
+        <div style={{textAlign:'center'}}>
+          <div style={{fontSize:18,fontWeight:700,color:T.text,marginBottom:6}}>Something went wrong</div>
+          <div style={{fontSize:13,color:T.text3,marginBottom:16,maxWidth:400,lineHeight:1.6}}>{this.state.error?.message||'An unexpected error occurred.'}</div>
+          <button onClick={()=>this.setState({error:null})}
+            style={{padding:'8px 20px',background:T.accent,border:'none',borderRadius:T.r,color:'#000',fontWeight:700,cursor:'pointer',fontSize:13}}>
+            Try Again
+          </button>
+          <button onClick={()=>window.location.reload()}
+            style={{padding:'8px 20px',background:'transparent',border:`1px solid ${T.border}`,borderRadius:T.r,color:T.text2,fontWeight:600,cursor:'pointer',fontSize:13,marginLeft:8}}>
+            Reload App
+          </button>
+        </div>
+        <details style={{maxWidth:500,width:'100%'}}>
+          <summary style={{fontSize:11,color:T.text3,cursor:'pointer',marginBottom:6}}>Technical details</summary>
+          <pre style={{fontSize:10,color:T.text3,background:T.surface2,padding:12,borderRadius:6,overflow:'auto',maxHeight:200,border:`1px solid ${T.border}`}}>
+            {this.state.error?.stack||'No stack trace'}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+}
+
 
 // ── NVIDIA-STYLE THEME ────────────────────────────────────────────────────────
 const mkT = (dark = true) => dark ? {
@@ -71,41 +107,55 @@ const DEF_H = [
 ];
 const DEF_T = {1:3200,2:4000,3:1800,5:220,6:450};
 const DEF_PF = [{id:1,name:'Main Portfolio',holdings:DEF_H,targets:DEF_T}];
-const TWEAK_DEF = {darkMode:true,autoRefreshMins:5,compactRows:false,showCharts:true,glowIntensity:60};
 
-// ── GROQ API ──────────────────────────────────────────────────────────────────
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+// ── AI PROVIDERS ──────────────────────────────────────────────────────────────
+const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GEMINI_URL = key =>
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
 
 async function callGroq(apiKey, prompt) {
-  if (!apiKey) throw new Error('No API key');
+  if (!apiKey) throw new Error('No Groq key');
   const res = await fetch(GROQ_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 1024,
-    }),
+    headers: {'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
+    body: JSON.stringify({model:GROQ_MODEL,messages:[{role:'user',content:prompt}],temperature:0.3,max_tokens:1024}),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  if (!res.ok) {const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`HTTP ${res.status}`);}
+  return (await res.json())?.choices?.[0]?.message?.content||'';
+}
+
+async function callGemini(apiKey, prompt) {
+  if (!apiKey) throw new Error('No Gemini key');
+  const res = await fetch(GEMINI_URL(apiKey), {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.3,maxOutputTokens:1024}}),
+  });
+  if (!res.ok) {const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`HTTP ${res.status}`);}
+  return (await res.json())?.candidates?.[0]?.content?.parts?.[0]?.text||'';
+}
+
+async function callAI(groqKey, geminiKey, primary, prompt) {
+  const order = primary==='groq'
+    ? [{key:groqKey,fn:callGroq,name:'Groq'},{key:geminiKey,fn:callGemini,name:'Gemini'}]
+    : [{key:geminiKey,fn:callGemini,name:'Gemini'},{key:groqKey,fn:callGroq,name:'Groq'}];
+  let lastErr;
+  for (const {key,fn,name} of order) {
+    if (!key) continue;
+    try {return {text:await fn(key,prompt),usedProvider:name};} catch(e){lastErr=e;}
   }
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || '';
+  throw lastErr||new Error('No AI provider configured');
 }
 
 function extractJSON(text) {
   try {
-    const m = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\{[\s\S]*\})/);
-    return m ? JSON.parse(m[1].trim()) : JSON.parse(text.trim());
-  } catch { return null; }
+    const m=text.match(/```(?:json)?\s*([\s\S]*?)```/)||text.match(/(\{[\s\S]*\})/);
+    return m?JSON.parse(m[1].trim()):JSON.parse(text.trim());
+  } catch {return null;}
 }
+
+const TWEAK_DEF = {darkMode:true,autoRefreshMins:5,compactRows:false,showCharts:true,glowIntensity:60};
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const isUS    = s => !s.endsWith('.NS') && !s.endsWith('.BO');
@@ -115,6 +165,16 @@ const fmt     = (v,cur='INR') => {
   if(v==null||isNaN(v))return'—';
   return(cur==='USD'?'$':'₹')+Math.abs(v).toLocaleString(cur==='USD'?'en-US':'en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 };
+// Show USD value + INR equivalent: "$1,234.56  ≈ ₹1,02,345"
+const fmtDual = (v, fx) => {
+  if(v==null||isNaN(v)||!fx) return fmt(v,'USD');
+  const sign=v>=0?'+':'−';
+  const abs=Math.abs(v);
+  const usd=`${sign}$${abs.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const inr=`₹${(abs*fx).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0})}`;
+  return `${usd}  ≈ ${inr}`;
+};
+
 const fmtBig = (v,cur='INR') => {
   if(v==null||isNaN(v))return'—';
   const s=cur==='USD'?'$':'₹';
@@ -137,7 +197,7 @@ const sortRows = (rows,col,dir) => [...rows].sort((a,b)=>{
 const Ic = {
   Plus:     ()=><svg width="14"height="14"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><line x1="12"y1="5"x2="12"y2="19"/><line x1="5"y1="12"x2="19"y2="12"/></svg>,
   Trash:    ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>,
-  Refresh:  ({s})=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"style={{animation:s?'spin .8s linear infinite':'none'}}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+  Refresh:  ({s})=><span style={{display:'inline-flex',width:13,height:13,flexShrink:0,willChange:s?'transform':'auto'}}><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"style={{animation:s?'spin .8s linear infinite':'none',transformOrigin:'center',display:'block'}}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>,
   Download: ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12"y1="15"x2="12"y2="3"/></svg>,
   Upload:   ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12"y1="3"x2="12"y2="15"/></svg>,
   Search:   ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="11"cy="11"r="8"/><line x1="21"y1="21"x2="16.65"y2="16.65"/></svg>,
@@ -165,9 +225,10 @@ const Ic = {
 // ── NV BUTTON ─────────────────────────────────────────────────────────────────
 const NvBtn = ({children,onClick,variant='ghost',disabled,style:sx={}}) => {
   const [h,sH]=useState(false);
-  const base={display:'flex',alignItems:'center',gap:6,border:'none',cursor:disabled?'not-allowed':'pointer',
-    fontFamily:'inherit',fontSize:12,fontWeight:600,letterSpacing:'.02em',transition:'all .15s',
-    borderRadius:6,padding:'7px 14px',opacity:disabled?.4:1,...sx};
+  const base={display:'inline-flex',alignItems:'center',gap:6,border:'none',cursor:disabled?'not-allowed':'pointer',
+    fontFamily:'inherit',fontSize:12,fontWeight:600,letterSpacing:'.02em',
+    transition:'background .12s, color .12s, border-color .12s',
+    borderRadius:6,padding:'7px 14px',opacity:disabled?.4:1,flexShrink:0,...sx};
   const vs={
     primary:{background:h?'#8fd000':'#76b900',color:'#000'},
     ghost:{background:h?'rgba(255,255,255,.08)':'transparent',color:h?'#fff':'#a0a0a0',border:'1px solid #333'},
@@ -177,10 +238,10 @@ const NvBtn = ({children,onClick,variant='ghost',disabled,style:sx={}}) => {
 };
 
 // ── NV INPUT ──────────────────────────────────────────────────────────────────
-const NvInput = ({value,onChange,onKeyDown,placeholder,type='text',style:sx={},autoFocus,T}) => {
+const NvInput = ({value,onChange,onKeyDown,onFocus:onFocusProp,onBlur:onBlurProp,placeholder,type='text',style:sx={},autoFocus,T}) => {
   const [f,sF]=useState(false);
   return <input autoFocus={autoFocus} type={type} value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder}
-    onFocus={()=>sF(true)} onBlur={()=>sF(false)}
+    onFocus={e=>{sF(true);onFocusProp&&onFocusProp(e);}} onBlur={e=>{sF(false);onBlurProp&&onBlurProp(e);}}
     style={{padding:'8px 12px',background:T.surface3,border:`1px solid ${f?T.accent:T.border2}`,borderRadius:6,
       color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit',
       transition:'border-color .15s',caretColor:T.accent,...sx}}/>;
@@ -337,7 +398,7 @@ function PriceChart({history,buyPrice,analystTarget,currency,T}) {
 }
 
 // ── STOCK DETAIL VIEW ─────────────────────────────────────────────────────────
-function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRefresh,onRangeChange,groqKey,groqAnalysis,onGroqRefresh,T}) {
+function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRefresh,onRangeChange,groqKey,geminiKey,primaryAI,aiAnalysis,onAIRefresh,T}) {
   const p=prices[symbol],currency=p?.currency||(isUS(symbol)?'USD':'INR'),curPrice=p?.current??null;
   const dayChange=p?((p.current-p.prev)/p.prev)*100:null;
   const invested=holding?holding.buyPrice*holding.qty:null;
@@ -353,7 +414,13 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
   const recColor=recKey==='strongBuy'||recKey==='buy'?T.success:recKey==='hold'?T.warning:T.danger;
   const history=detail?.history||[],loading=detail?.loading,curRange=detail?.range||'3mo';
   const RANGES=[{v:'1mo',l:'1M'},{v:'3mo',l:'3M'},{v:'6mo',l:'6M'},{v:'1y',l:'1Y'}];
-  const dayRows=useMemo(()=>[...history].reverse().slice(0,60).map(d=>({...d,dayPL:holding&&d.change!=null?(d.change/100)*d.close*holding.qty:null})),[history,holding]);
+  const START_DATE = new Date('2026-03-30').getTime();
+  const dayRows=useMemo(()=>[...history]
+    .filter(d=>d.date>=START_DATE)
+    .reverse()
+    .slice(0,60)
+    .map(d=>({...d,dayPL:holding&&d.change!=null?(d.change/100)*d.close*holding.qty:null}))
+  ,[history,holding]);
   const InfoRow=({l,v,vc})=><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:`1px solid ${T.border}`,fontSize:12}}><span style={{color:T.text3}}>{l}</span><span style={{fontWeight:600,color:vc||T.text}}>{v}</span></div>;
   const tdS={padding:'9px 12px',borderBottom:`1px solid ${T.border}`,fontSize:12};
   return(
@@ -384,9 +451,135 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
           {target&&<span style={{display:'flex',alignItems:'center',gap:6,fontSize:11,color:T.accent}}><span style={{display:'inline-block',width:16,borderTop:`1px dashed ${T.accent}`}}/> Analyst Target</span>}
         </div>
       </div>
-      {/* Stats Grid */}
+      {/* ── Day-wise P&L Table ── */}
+      <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+        {/* Header */}
+        <div style={{padding:'12px 18px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:3,height:18,background:T.accent,borderRadius:2}}/>
+            <span style={{fontSize:14,fontWeight:700,color:T.text}}>Day-wise P&L</span>
+            {dayRows.length>0&&<span style={{fontSize:11,color:T.text3,background:T.surface3,padding:'2px 8px',borderRadius:10}}>{dayRows.length} sessions</span>}
+          </div>
+          {dayRows.length>0&&(
+            <div style={{display:'flex',gap:14,fontSize:11,alignItems:'center'}}>
+              <span style={{color:T.success,fontWeight:600}}>▲ {dayRows.filter(d=>d.change>=0).length} up</span>
+              <span style={{color:T.danger,fontWeight:600}}>▼ {dayRows.filter(d=>d.change<0).length} down</span>
+              {holding&&(()=>{const tot=dayRows.reduce((s,d)=>s+(d.dayPL||0),0);return<span style={{fontWeight:700,color:gColor(tot,T),background:`${gColor(tot,T)}15`,padding:'2px 10px',borderRadius:20}}>{tot>=0?'+':'−'}{fmt(Math.abs(tot),currency)} total</span>;})()}
+            </div>
+          )}
+        </div>
+
+        {/* Loading skeleton */}
+        {loading&&!dayRows.length&&(
+          <div style={{padding:16,display:'flex',flexDirection:'column',gap:8}}>
+            {[1,2,3,4,5].map(i=><div key={i} style={{height:32,borderRadius:6,background:T.surface3,animation:'pulse 1.5s infinite',opacity:1-(i*0.1)}}/>)}
+          </div>
+        )}
+
+        {/* No data yet */}
+        {!loading&&!dayRows.length&&(
+          <div style={{padding:32,textAlign:'center',color:T.text3,fontSize:13}}>
+            Click Refresh to load price history
+          </div>
+        )}
+
+        {/* Bar chart */}
+        {dayRows.length>0&&(()=>{
+          const chartD=[...dayRows].reverse().slice(0,40);
+          const vals=chartD.map(d=>holding&&d.dayPL!=null?d.dayPL:d.change).filter(v=>v!=null);
+          const maxAbs=Math.max(...vals.map(Math.abs),1);
+          const hasPL=holding&&chartD.some(d=>d.dayPL!=null);
+          return(
+            <div style={{padding:'14px 18px 10px',borderBottom:`1px solid ${T.border}`}}>
+              <div style={{fontSize:10,color:T.text3,marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em'}}>
+                {hasPL?`Your P&L — Last ${chartD.length} Sessions`:`Price Change % — Last ${chartD.length} Sessions`}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:1.5,height:64,position:'relative'}}>
+                {/* Zero line */}
+                <div style={{position:'absolute',top:'50%',left:0,right:0,height:1,background:T.border,zIndex:0}}/>
+                {chartD.map((d,i)=>{
+                  const val=hasPL?d.dayPL:d.change;
+                  if(val==null)return<div key={i} style={{flex:1}}/>;
+                  const pos=val>=0;
+                  const barH=Math.max((Math.abs(val)/maxAbs)*28,2);
+                  const dateStr=new Date(d.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+                  const valStr=hasPL?`${pos?'+':'−'}${fmt(Math.abs(val),currency)}`:fmtPct(val);
+                  return(
+                    <div key={i} style={{flex:1,height:64,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'default',position:'relative',zIndex:1}}
+                      title={`${dateStr}: ${valStr}`}>
+                      {/* Top half (positive) */}
+                      <div style={{flex:1,display:'flex',alignItems:'flex-end',width:'100%',paddingBottom:1}}>
+                        {pos&&<div style={{width:'100%',height:barH,background:T.success,borderRadius:'2px 2px 0 0',opacity:.85}}/>}
+                      </div>
+                      {/* Bottom half (negative) */}
+                      <div style={{flex:1,display:'flex',alignItems:'flex-start',width:'100%',paddingTop:1}}>
+                        {!pos&&<div style={{width:'100%',height:barH,background:T.danger,borderRadius:'0 0 2px 2px',opacity:.85}}/>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Table — full height, no maxHeight cap */}
+        {dayRows.length>0&&(
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead>
+                <tr style={{background:T.surface3}}>
+                  {['Date','Open','High','Low','Close','Change %','Day P&L','Cumulative P&L'].map((h,i)=>(
+                    <th key={h} style={{...tdS,background:T.surface3,color:T.text3,fontSize:11,fontWeight:700,textAlign:i===0?'left':'right',position:'sticky',top:0,zIndex:2,padding:'10px 12px'}}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(()=>{
+                  let cumPL=0;
+                  return dayRows.map((d,i)=>{
+                    const dayPL=d.dayPL??null;
+                    if(dayPL!=null) cumPL+=dayPL;
+                    const isUp=d.change>=0;
+                    return(
+                      <tr key={i}
+                        style={{background:i%2===0?T.surface2:T.surface3,transition:'background .06s'}}
+                        onMouseEnter={e=>e.currentTarget.style.background=T.surface4}
+                        onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                        <td style={{...tdS,fontWeight:600,color:T.text}}>
+                          {new Date(d.date).toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short',year:'2-digit'})}
+                        </td>
+                        <td style={{...tdS,textAlign:'right',color:T.text3}}>{fmt(d.open,currency)}</td>
+                        <td style={{...tdS,textAlign:'right',color:T.success,fontWeight:600}}>{fmt(d.high,currency)}</td>
+                        <td style={{...tdS,textAlign:'right',color:T.danger,fontWeight:600}}>{fmt(d.low,currency)}</td>
+                        <td style={{...tdS,textAlign:'right',fontWeight:700,color:isUp?T.success:T.danger}}>{fmt(d.close,currency)}</td>
+                        <td style={{...tdS,textAlign:'right'}}><Badge val={d.change} pct T={T}/></td>
+                        <td style={{...tdS,textAlign:'right'}}>
+                          {dayPL!=null?<Badge val={dayPL} currency={currency} T={T}/>
+                          :<span style={{fontSize:11,color:T.text3,fontStyle:'italic'}}>not held</span>}
+                        </td>
+                        <td style={{...tdS,textAlign:'right'}}>
+                          {holding&&dayPL!=null
+                            ?<span style={{fontWeight:700,fontSize:12,color:gColor(cumPL,T)}}>{cumPL>=0?'+':'−'}{fmt(Math.abs(cumPL),currency)}</span>
+                            :<span style={{color:T.text3}}>—</span>}
+                        </td>
+                      </tr>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+
+            {/* Stats Grid */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16}}>
-        {/* Position */}
+
+        {/* Col 1 — Your Position + Analyst Target */}
         <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
           <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
             <div style={{width:3,height:16,background:isUS(symbol)?T.usColor:T.inColor,borderRadius:2}}/>
@@ -405,8 +598,23 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
             ].map(({l,v,vc},i)=><InfoRow key={i} l={l} v={v} vc={vc}/>)
             :<div style={{padding:'16px 0',color:T.text3,fontSize:12,textAlign:'center'}}>Not in portfolio</div>}
           </div>
+          {/* Analyst Target — compact, inside position card */}
+          <div style={{borderTop:`1px solid ${T.border}`,margin:'0 16px',paddingTop:10,paddingBottom:12}}>
+            <div style={{fontSize:10,color:T.text3,fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>Analyst Target</div>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              {holding
+                ?<TargetCell id={holding.id} target={target} curPrice={curPrice} currency={currency} onSave={onSaveTarget} T={T} compact/>
+                :<span style={{fontSize:11,color:T.text3,fontStyle:'italic'}}>Not held</span>}
+              {recKey&&<span style={{fontSize:11,fontWeight:700,color:recColor,marginLeft:'auto'}}>{recKey.replace(/([A-Z])/g,' $1').trim()}</span>}
+            </div>
+            {finData.targetMeanPrice&&<div style={{fontSize:10,color:T.text3,marginTop:4}}>
+              Analyst mean: <b style={{color:T.text}}>{fmt(finData.targetMeanPrice,currency)}</b>
+              {totalAna>0&&<span style={{marginLeft:8}}>{(recTrend.strongBuy||0)+(recTrend.buy||0)} Buy · {recTrend.hold||0} Hold · {(recTrend.sell||0)+(recTrend.strongSell||0)} Sell</span>}
+            </div>}
+          </div>
         </div>
-        {/* Fundamentals */}
+
+        {/* Col 2 — Fundamentals */}
         <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
           <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
             <div style={{width:3,height:16,background:T.cyan,borderRadius:2}}/>
@@ -425,56 +633,70 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
             ].map(({l,v},i)=><InfoRow key={i} l={l} v={v}/>)}
           </div>
         </div>
-        {/* Analyst */}
-        <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
-            <div style={{width:3,height:16,background:T.accent,borderRadius:2}}/>
-            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Analyst Target</span>
-          </div>
-          <div style={{padding:'12px 16px',display:'flex',flexDirection:'column',gap:12}}>
-            {holding&&<TargetCell id={holding.id} target={target} curPrice={curPrice} currency={currency} onSave={onSaveTarget} T={T}/>}
-            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:12}}>
-              <div style={{fontSize:11,color:T.text3,marginBottom:8,fontWeight:500,textTransform:'uppercase',letterSpacing:'.06em'}}>Analyst Consensus</div>
-              {recKey?<div style={{display:'flex',flexDirection:'column',gap:6}}>
-                <span style={{fontSize:14,fontWeight:700,color:recColor,textTransform:'capitalize'}}>{recKey.replace(/([A-Z])/g,' $1').trim()}</span>
-                {totalAna>0&&<div style={{fontSize:11,color:T.text3}}>{(recTrend.strongBuy||0)+(recTrend.buy||0)} Buy · {recTrend.hold||0} Hold · {(recTrend.sell||0)+(recTrend.strongSell||0)} Sell ({totalAna} analysts)</div>}
-                {finData.targetMeanPrice&&<div style={{fontSize:12,color:T.text2}}>Mean target: <strong style={{color:T.text}}>{fmt(finData.targetMeanPrice,currency)}</strong></div>}
-              </div>:<span style={{color:T.text3,fontSize:12,fontStyle:'italic'}}>No data available</span>}
+
+        {/* Col 3 — Day-wise P&L table (replaces Analyst Target) */}
+        <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{width:3,height:16,background:T.accent,borderRadius:2}}/>
+              <span style={{fontSize:13,fontWeight:700,color:T.text}}>Day-wise P&L</span>
             </div>
+            {dayRows.length>0&&(()=>{
+              const tot=dayRows.reduce((s,d)=>s+(d.dayPL||0),0);
+              return holding?<span style={{fontSize:11,fontWeight:700,color:gColor(tot,T),background:`${gColor(tot,T)}15`,padding:'2px 8px',borderRadius:12}}>{tot>=0?'+':'−'}{fmt(Math.abs(tot),currency)}</span>:null;
+            })()}
           </div>
+          {/* Loading */}
+          {loading&&!dayRows.length&&(
+            <div style={{padding:16,display:'flex',flexDirection:'column',gap:6}}>
+              {[1,2,3,4,5].map(i=><div key={i} style={{height:24,borderRadius:4,background:T.surface3,animation:'pulse 1.5s infinite',opacity:1-i*.15}}/>)}
+            </div>
+          )}
+          {!loading&&!dayRows.length&&(
+            <div style={{padding:24,textAlign:'center',color:T.text3,fontSize:12}}>Click Refresh to load</div>
+          )}
+          {/* Scrollable table */}
+          {dayRows.length>0&&(
+            <div style={{overflowY:'auto',flex:1}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                <thead style={{position:'sticky',top:0,zIndex:2}}>
+                  <tr style={{background:T.surface3}}>
+                    <th style={{padding:'7px 10px',textAlign:'left',color:T.text3,fontWeight:700,fontSize:10,borderBottom:`1px solid ${T.border}`}}>Date</th>
+                    <th style={{padding:'7px 10px',textAlign:'right',color:T.text3,fontWeight:700,fontSize:10,borderBottom:`1px solid ${T.border}`}}>Close</th>
+                    <th style={{padding:'7px 10px',textAlign:'right',color:T.text3,fontWeight:700,fontSize:10,borderBottom:`1px solid ${T.border}`}}>Day %</th>
+                    {holding&&<th style={{padding:'7px 10px',textAlign:'right',color:T.text3,fontWeight:700,fontSize:10,borderBottom:`1px solid ${T.border}`}}>Day P&L</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayRows.map((d,i)=>{
+                    const isUp=d.change>=0;
+                    return(
+                      <tr key={i} style={{background:i%2===0?T.surface2:T.surface3}}
+                        onMouseEnter={e=>e.currentTarget.style.background=T.surface4}
+                        onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                        <td style={{padding:'6px 10px',color:T.text2,fontSize:11,borderBottom:`1px solid ${T.border}`}}>
+                          {new Date(d.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}
+                        </td>
+                        <td style={{padding:'6px 10px',textAlign:'right',fontWeight:600,fontSize:11,color:isUp?T.success:T.danger,borderBottom:`1px solid ${T.border}`}}>
+                          {fmt(d.close,currency)}
+                        </td>
+                        <td style={{padding:'6px 10px',textAlign:'right',borderBottom:`1px solid ${T.border}`}}>
+                          <Badge val={d.change} pct T={T}/>
+                        </td>
+                        {holding&&<td style={{padding:'6px 10px',textAlign:'right',borderBottom:`1px solid ${T.border}`}}>
+                          {d.dayPL!=null?<Badge val={d.dayPL} currency={currency} T={T}/>:<span style={{color:T.text3,fontSize:10}}>—</span>}
+                        </td>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
-      {/* Day-wise Table */}
-      {dayRows.length>0&&(
-        <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`}}>
-            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Day-wise Performance <span style={{color:T.text3,fontWeight:400,fontSize:12}}>({dayRows.length} trading days)</span></span>
-          </div>
-          <div style={{overflowX:'auto',maxHeight:280,overflowY:'auto'}}>
-            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-              <thead style={{position:'sticky',top:0,zIndex:2}}>
-                <tr>{['Date','Open','High','Low','Close','Day %','Day P&L'].map(h=><th key={h} style={{...tdS,background:T.surface3,color:T.text3,fontSize:11,fontWeight:600,textAlign:h==='Date'?'left':'right'}}>{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {dayRows.map((d,i)=>(
-                  <tr key={i} style={{background:i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
-                    <td style={{...tdS,color:T.text2}}>{new Date(d.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'})}</td>
-                    <td style={{...tdS,textAlign:'right',color:T.text2}}>{fmt(d.open,currency)}</td>
-                    <td style={{...tdS,textAlign:'right',color:T.success}}>{fmt(d.high,currency)}</td>
-                    <td style={{...tdS,textAlign:'right',color:T.danger}}>{fmt(d.low,currency)}</td>
-                    <td style={{...tdS,textAlign:'right',fontWeight:700,color:T.text}}>{fmt(d.close,currency)}</td>
-                    <td style={{...tdS,textAlign:'right'}}><Badge val={d.change} pct T={T}/></td>
-                    <td style={{...tdS,textAlign:'right'}}>{d.dayPL!=null?<Badge val={d.dayPL} currency={currency} T={T}/>:<span style={{color:T.text3}}>—</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {/* Groq AI Analysis */}
-      {groqKey&&(
-        <GroqAnalysis symbol={symbol} name={holding?.name} curPrice={curPrice} currency={currency} holding={holding} analysis={groqAnalysis} onRefresh={onGroqRefresh} T={T}/>
+            {(groqKey||geminiKey)&&(
+        <AIAnalysis symbol={symbol} holding={holding} analysis={aiAnalysis} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} onRefresh={onAIRefresh} T={T}/>
       )}
     </div>
   );
@@ -609,154 +831,125 @@ function CSVImportModal({onImport,onClose,market,T}) {
   );
 }
 
-// ── GROQ SETUP MODAL ─────────────────────────────────────────────────────────
-function GroqSetupModal({onSave,T}) {
-  const [key,setKey]=useState('');
-  const [testing,setTesting]=useState(false);
-  const [status,setStatus]=useState(null);
-  const [errMsg,setErrMsg]=useState('');
 
-  const test=async()=>{
-    if(!key.trim()){setStatus('err');setErrMsg('Enter an API key first.');return;}
-    setTesting(true);setStatus(null);
+// ── AI SETUP MODAL ────────────────────────────────────────────────────────────
+function AISetupModal({onSave,T}) {
+  const [groqKey,setGroqKeyL]=useState('');
+  const [geminiKey,setGeminiKeyL]=useState('');
+  const [primary,setPrimary]=useState('groq');
+  const [testing,setTesting]=useState(null);
+  const [results,setResults]=useState({});
+  const test=async(provider)=>{
+    const key=provider==='groq'?groqKey:geminiKey;
+    if(!key.trim())return;
+    setTesting(provider);
     try{
-      await callGroq(key.trim(),'Reply with exactly: OK');
-      setStatus('ok');
-    }catch(e){setStatus('err');setErrMsg(e.message);}
-    setTesting(false);
+      if(provider==='groq') await callGroq(key.trim(),'Reply OK');
+      else await callGemini(key.trim(),'Reply OK');
+      setResults(p=>({...p,[provider]:'ok'}));
+    }catch(e){setResults(p=>({...p,[provider]:e.message}));}
+    setTesting(null);
   };
-
+  const hasAny=groqKey.trim()||geminiKey.trim();
+  const PROVS=[
+    {id:'groq',   label:'Groq',   sub:'Llama 3.3 70B · 14,400 free req/day',   icon:'⚡', grad:'linear-gradient(135deg,#f55036,#ff8c00)', ph:'gsk_…',  hint:'console.groq.com → API Keys'},
+    {id:'gemini', label:'Gemini', sub:'Gemini 2.0 Flash · 1,500 free req/day',  icon:'✦', grad:'linear-gradient(135deg,#4285f4,#34a853)', ph:'AIza…',  hint:'aistudio.google.com → Get API Key'},
+  ];
   return(
-    <div style={{position:'fixed',inset:0,zIndex:3000,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,.75)',backdropFilter:'blur(6px)'}}>
-      <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border2}`,width:500,maxWidth:'92vw',boxShadow:'0 32px 80px rgba(0,0,0,.6)',overflow:'hidden'}}>
-        {/* Header */}
-        <div style={{background:'linear-gradient(135deg,#1a1a2e,#0d1117)',padding:'24px 28px',borderBottom:`1px solid ${T.border}`}}>
-          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:10}}>
-            <div style={{width:44,height:44,borderRadius:10,background:'linear-gradient(135deg,#f55036,#ff8c00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>⚡</div>
-            <div>
-              <div style={{fontSize:18,fontWeight:700,color:'#fff',letterSpacing:'-.01em'}}>Enable Groq AI</div>
-              <div style={{fontSize:12,color:'rgba(255,255,255,.5)',marginTop:2}}>Powered by Llama 3.3 70B on Groq</div>
-            </div>
-          </div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,.6)',lineHeight:1.6}}>
-            Groq adds AI-powered stock analysis using Llama 3.3 70B — the fastest free AI API available. Your key is stored locally and only sent to Groq's servers.
-          </div>
+    <div style={{position:'fixed',inset:0,zIndex:3000,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,.78)',backdropFilter:'blur(6px)'}}>
+      <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border2}`,width:560,maxWidth:'94vw',boxShadow:'0 32px 80px rgba(0,0,0,.6)',overflow:'hidden'}}>
+        <div style={{background:'linear-gradient(135deg,#0d1117,#1a1a2e)',padding:'22px 28px',borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:18,fontWeight:700,color:'#fff',marginBottom:4}}>Enable AI Analysis</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,.5)'}}>Configure one or both. Primary is tried first, secondary is automatic fallback.</div>
         </div>
-        {/* Body */}
-        <div style={{padding:'24px 28px',display:'flex',flexDirection:'column',gap:16}}>
-          <div style={{background:T.surface2,borderRadius:8,padding:'14px 16px',border:`1px solid ${T.border}`,fontSize:12,color:T.text2,lineHeight:1.7}}>
-            <div style={{fontWeight:700,color:T.text,marginBottom:6,display:'flex',alignItems:'center',gap:6}}>⚡ What Groq AI enables</div>
-            <div>• <b style={{color:T.accent}}>AI Stock Analysis</b> — instant sentiment, risks & opportunities</div>
-            <div>• <b style={{color:T.accent}}>Portfolio Insights</b> — AI commentary on your holdings</div>
-            <div>• <b style={{color:T.accent}}>14,400 free requests/day</b> — no credit card needed</div>
-            <div style={{marginTop:6,color:T.text3}}>Model: <b>Llama 3.3 70B</b> · Provider: <b>Groq</b> · Latency: &lt;1 second</div>
-          </div>
-          <div>
-            <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Groq API Key</div>
-            <div style={{display:'flex',gap:8}}>
-              <NvInput value={key} onChange={e=>setKey(e.target.value)} placeholder="gsk_…" T={T} style={{fontFamily:'monospace',fontSize:12}}/>
-              <NvBtn onClick={test} disabled={testing} T={T}>{testing?'Testing…':'Test Key'}</NvBtn>
-            </div>
-            {status==='ok'&&<div style={{fontSize:11,color:T.success,marginTop:6}}>✓ Key verified — Groq is ready</div>}
-            {status==='err'&&<div style={{fontSize:11,color:T.danger,marginTop:6}}>✗ {errMsg}</div>}
-            <div style={{fontSize:11,color:T.text3,marginTop:6}}>
-              Get a free key at <b>console.groq.com</b> → API Keys → Create API Key. No credit card needed.
-            </div>
-          </div>
+        <div style={{padding:'20px 28px',display:'flex',flexDirection:'column',gap:14}}>
+          {PROVS.map(prov=>{
+            const key=prov.id==='groq'?groqKey:geminiKey;
+            const setKey=prov.id==='groq'?setGroqKeyL:setGeminiKeyL;
+            const res=results[prov.id];
+            const isPrimary=primary===prov.id;
+            return(
+              <div key={prov.id} style={{background:T.surface2,borderRadius:10,border:`1px solid ${isPrimary?T.accent:T.border}`,padding:'14px 16px',transition:'border-color .15s'}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+                  <div style={{width:34,height:34,borderRadius:8,background:prov.grad,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>{prov.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.text}}>{prov.label}</div>
+                    <div style={{fontSize:11,color:T.text3}}>{prov.sub}</div>
+                  </div>
+                  <button onClick={()=>setPrimary(prov.id)} style={{padding:'3px 10px',borderRadius:20,border:`1px solid ${isPrimary?T.accent:T.border2}`,background:isPrimary?T.accentBg:'transparent',color:isPrimary?T.accent:T.text3,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .15s'}}>
+                    {isPrimary?'★ Primary':'Set Primary'}
+                  </button>
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  <NvInput value={key} onChange={e=>setKey(e.target.value)} placeholder={prov.ph} T={T} style={{fontFamily:'monospace',fontSize:12}}/>
+                  <NvBtn onClick={()=>test(prov.id)} disabled={!key.trim()||testing===prov.id} T={T}>{testing===prov.id?'Testing…':'Test'}</NvBtn>
+                </div>
+                {res==='ok'&&<div style={{fontSize:11,color:T.success,marginTop:6}}>✓ Key verified</div>}
+                {res&&res!=='ok'&&<div style={{fontSize:11,color:T.danger,marginTop:6}}>✗ {res}</div>}
+                <div style={{fontSize:10,color:T.text3,marginTop:5}}>Get free key: <b>{prov.hint}</b></div>
+              </div>
+            );
+          })}
         </div>
-        {/* Footer */}
-        <div style={{padding:'16px 28px',borderTop:`1px solid ${T.border}`,display:'flex',gap:10,justifyContent:'flex-end',background:T.surface2}}>
-          <NvBtn onClick={()=>onSave('')} T={T}>Skip — Use Yahoo Finance only</NvBtn>
-          <NvBtn onClick={()=>{if(key.trim())onSave(key.trim());}} variant="primary" disabled={!key.trim()} T={T}>Save Key & Enable Groq</NvBtn>
+        <div style={{padding:'14px 28px',borderTop:`1px solid ${T.border}`,display:'flex',gap:10,justifyContent:'flex-end',background:T.surface2}}>
+          <NvBtn onClick={()=>onSave('','','groq')} T={T}>Skip — Yahoo Finance only</NvBtn>
+          <NvBtn onClick={()=>onSave(groqKey.trim(),geminiKey.trim(),primary)} variant="primary" disabled={!hasAny} T={T}>Save & Enable AI</NvBtn>
         </div>
       </div>
     </div>
   );
 }
 
-// ── GROQ ANALYSIS PANEL ──────────────────────────────────────────────────────
-function GroqAnalysis({symbol,name,curPrice,currency,holding,analysis,onRefresh,T}) {
-  const loading=analysis?.loading;
-  const data=analysis?.data;
-  const err=analysis?.error;
-
-  const sentColor=s=>s?.toLowerCase().includes('bullish')?T.success:s?.toLowerCase().includes('bearish')?T.danger:T.warning;
-
+// ── AI ANALYSIS PANEL ─────────────────────────────────────────────────────────
+function AIAnalysis({symbol,holding,analysis,groqKey,geminiKey,primaryAI,onRefresh,T}) {
+  const loading=analysis?.loading,data=analysis?.data,err=analysis?.error,usedProvider=analysis?.provider;
+  const hasBoth=!!(groqKey&&geminiKey);
+  const sentColor=s=>!s?T.text3:s.toLowerCase().includes('bullish')?T.success:s.toLowerCase().includes('bearish')?T.danger:T.warning;
+  const provIcon=p=>p==='Groq'?'⚡':'✦';
+  const provGrad=p=>p==='Groq'?'linear-gradient(135deg,#f55036,#ff8c00)':'linear-gradient(135deg,#4285f4,#34a853)';
   return(
     <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-      {/* Header */}
-      <div style={{padding:'12px 18px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:`linear-gradient(90deg,rgba(66,133,244,.08),transparent)`}}>
+      <div style={{padding:'12px 18px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:'linear-gradient(90deg,rgba(118,185,0,.06),transparent)'}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <div style={{width:28,height:28,borderRadius:6,background:'linear-gradient(135deg,#f55036,#ff8c00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>⚡</div>
+          <div style={{width:28,height:28,borderRadius:6,background:provGrad(usedProvider||primaryAI),display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>{provIcon(usedProvider||primaryAI||'Groq')}</div>
           <div>
-            <div style={{fontSize:13,fontWeight:700,color:T.text}}>Groq AI Analysis</div>
-            <div style={{fontSize:10,color:T.text3}}>Llama 3.3 70B · Groq</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.text}}>AI Analysis</div>
+            <div style={{fontSize:10,color:T.text3}}>{usedProvider?`via ${usedProvider}`:`Primary: ${primaryAI==='groq'?'Groq':'Gemini'}`}</div>
           </div>
-          {data?.sentiment&&<span style={{padding:'3px 10px',borderRadius:20,background:`${sentColor(data.sentiment)}18`,color:sentColor(data.sentiment),fontSize:11,fontWeight:700,marginLeft:4}}>{data.sentiment}</span>}
+          {data?.sentiment&&<span style={{padding:'3px 10px',borderRadius:20,background:`${sentColor(data.sentiment)}18`,color:sentColor(data.sentiment),fontSize:11,fontWeight:700}}>{data.sentiment}</span>}
         </div>
-        <NvBtn onClick={onRefresh} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Analysing…':'Re-analyse'}</NvBtn>
+        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+          {hasBoth&&<div style={{display:'flex',background:T.surface3,borderRadius:6,padding:2,gap:2}}>
+            {[{id:'groq',label:'⚡ Groq'},{id:'gemini',label:'✦ Gemini'}].map(p=>(
+              <button key={p.id} onClick={()=>onRefresh(p.id)} style={{padding:'3px 10px',borderRadius:4,border:'none',background:(usedProvider||primaryAI)===(p.id==='groq'?'Groq':'Gemini')||primaryAI===p.id?T.surface:'transparent',color:T.text3,cursor:'pointer',fontSize:10,fontWeight:600,transition:'all .12s'}}>{p.label}</button>
+            ))}
+          </div>}
+          <NvBtn onClick={()=>onRefresh(primaryAI)} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Analysing…':'Analyse'}</NvBtn>
+        </div>
       </div>
-      {/* Content */}
       <div style={{padding:'16px 18px'}}>
-        {loading&&!data&&(
-          <div style={{display:'flex',flexDirection:'column',gap:10}}>
-            {[90,70,80,60].map((w,i)=><div key={i} style={{height:12,borderRadius:4,background:T.surface4,width:`${w}%`,animation:'pulse 1.5s infinite'}}/>)}
-          </div>
-        )}
+        {loading&&!data&&<div style={{display:'flex',flexDirection:'column',gap:10}}>{[90,70,80,60].map((w,i)=><div key={i} style={{height:12,borderRadius:4,background:T.surface4,width:`${w}%`,animation:'pulse 1.5s infinite'}}/>)}</div>}
         {err&&!data&&<div style={{color:T.danger,fontSize:12,padding:'8px 0'}}>{err}</div>}
+        {!loading&&!data&&!err&&<div style={{color:T.text3,fontSize:12,textAlign:'center',padding:'12px 0'}}>Click Analyse to generate AI insights for this stock.</div>}
         {data&&(
           <div style={{display:'flex',flexDirection:'column',gap:16}}>
-            {data.overview&&(
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Overview</div>
-                <div style={{fontSize:13,color:T.text,lineHeight:1.65}}>{data.overview}</div>
-              </div>
-            )}
+            {data.overview&&<div><div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Overview</div><div style={{fontSize:13,color:T.text,lineHeight:1.65}}>{data.overview}</div></div>}
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-              {data.opportunities?.length>0&&(
-                <div style={{background:T.successBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.success}20`}}>
-                  <div style={{fontSize:11,fontWeight:700,color:T.success,marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Opportunities</div>
-                  {(Array.isArray(data.opportunities)?data.opportunities:[data.opportunities]).map((o,i)=>(
-                    <div key={i} style={{display:'flex',gap:6,fontSize:12,color:T.text,marginBottom:i<data.opportunities.length-1?5:0}}>
-                      <span style={{color:T.success,flexShrink:0}}>▲</span>{o}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {data.risks?.length>0&&(
-                <div style={{background:T.dangerBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.danger}20`}}>
-                  <div style={{fontSize:11,fontWeight:700,color:T.danger,marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Risks</div>
-                  {(Array.isArray(data.risks)?data.risks:[data.risks]).map((r,i)=>(
-                    <div key={i} style={{display:'flex',gap:6,fontSize:12,color:T.text,marginBottom:i<data.risks.length-1?5:0}}>
-                      <span style={{color:T.danger,flexShrink:0}}>▼</span>{r}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {data.opportunities?.length>0&&<div style={{background:T.successBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.success}20`}}><div style={{fontSize:11,fontWeight:700,color:T.success,marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Opportunities</div>{[].concat(data.opportunities).map((o,i)=><div key={i} style={{display:'flex',gap:6,fontSize:12,color:T.text,marginBottom:4}}><span style={{color:T.success,flexShrink:0}}>▲</span>{o}</div>)}</div>}
+              {data.risks?.length>0&&<div style={{background:T.dangerBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.danger}20`}}><div style={{fontSize:11,fontWeight:700,color:T.danger,marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Risks</div>{[].concat(data.risks).map((r,i)=><div key={i} style={{display:'flex',gap:6,fontSize:12,color:T.text,marginBottom:4}}><span style={{color:T.danger,flexShrink:0}}>▼</span>{r}</div>)}</div>}
             </div>
-            {data.performance&&(
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Recent Performance</div>
-                <div style={{fontSize:12,color:T.text2,lineHeight:1.65}}>{data.performance}</div>
-              </div>
-            )}
-            {holding&&data.positionComment&&(
-              <div style={{background:T.accentBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.accent}20`}}>
-                <div style={{fontSize:11,fontWeight:700,color:T.accent,marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Your Position</div>
-                <div style={{fontSize:12,color:T.text,lineHeight:1.65}}>{data.positionComment}</div>
-              </div>
-            )}
-            {data.disclaimer&&<div style={{fontSize:10,color:T.text3,fontStyle:'italic',marginTop:-4}}>{data.disclaimer}</div>}
+            {data.performance&&<div><div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Recent Performance</div><div style={{fontSize:12,color:T.text2,lineHeight:1.65}}>{data.performance}</div></div>}
+            {holding&&data.positionComment&&<div style={{background:T.accentBg,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.accent}20`}}><div style={{fontSize:11,fontWeight:700,color:T.accent,marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Your Position</div><div style={{fontSize:12,color:T.text,lineHeight:1.65}}>{data.positionComment}</div></div>}
+            {data.disclaimer&&<div style={{fontSize:10,color:T.text3,fontStyle:'italic'}}>{data.disclaimer}</div>}
           </div>
         )}
-        {!loading&&!data&&!err&&<div style={{color:T.text3,fontSize:12,padding:'8px 0',textAlign:'center'}}>Click Re-analyse to generate AI insights for this stock.</div>}
       </div>
     </div>
   );
 }
 
 // ── HOLDINGS TABLE ────────────────────────────────────────────────────────────
-function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnpledged,onRemove,fetchPrices,loading,error,lastUpdated,compact,onImportCSV,addHolding,onRowClick,T}) {
+function Section({title,flag,accent,rows,currency,usdInr,targets,onSaveTarget,onSaveUnpledged,onRemove,fetchPrices,loading,error,lastUpdated,compact,onImportCSV,addHolding,onRowClick,T}) {
   const [sort,setSort]=useState({col:'allocPct',dir:'desc'});
   const [filter,setFilter]=useState('');
   const [showAdd,setShowAdd]=useState(false);
@@ -770,10 +963,50 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
   const flt=useMemo(()=>filter.trim()?srt.filter(r=>r.name.toLowerCase().includes(filter.toLowerCase())||r.symbol.toLowerCase().includes(filter.toLowerCase())):srt,[srt,filter]);
   const onSort=col=>setSort(p=>({col,dir:p.col===col?(p.dir==='asc'?'desc':'asc'):'desc'}));
   const doSearch=q=>{setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
-    timer.current=setTimeout(async()=>{setBusyS(true);try{const res=await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});const json=await res.json();setResults((json?.quotes??[]).filter(r=>r.symbol&&r.quoteType!=='OPTION').slice(0,7));}catch{setResults([]);}setBusyS(false);},300);};
+    timer.current=setTimeout(async()=>{
+      setBusyS(true);
+      try{
+        let quotes=[];
+        for(const host of ['query1','query2']){
+          try{
+            const res=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0&lang=en-US`,{headers:{Accept:'application/json'}});
+            if(res.ok){const json=await res.json();quotes=(json?.quotes??[]).filter(r=>r.symbol&&r.quoteType!=='OPTION').slice(0,7);if(quotes.length)break;}
+          }catch{}
+        }
+        setResults(quotes);
+      }catch{setResults([]);}
+      setBusyS(false);
+    },400);};
   const selectResult=r=>{setForm(p=>({...p,symbol:r.symbol,name:r.longname||r.shortname||r.symbol}));setSrch(r.longname||r.shortname||r.symbol);setResults([]);};
   const doAdd=()=>{const sym=form.symbol.trim().toUpperCase();if(!sym||!form.qty||!form.buyPrice)return;addHolding({id:Date.now(),symbol:sym,name:form.name.trim()||sym,qty:parseFloat(parseFloat(form.qty).toFixed(8)),buyPrice:parseFloat(form.buyPrice),unpledgedQty:null});setForm({symbol:'',name:'',qty:'',buyPrice:''});setSrch('');setResults([]);setShowAdd(false);};
-  const csvExport=()=>{const h=['Stock','Symbol','Qty','Unpledged Qty','Buy Price','Invested','LTP','Day%','Day P&L','Value','P&L','P&L%','Alloc%','Target','Upside%'];const body=rows.map(r=>{const tgt=targets[r.id],up=tgt!=null&&r.curPrice!=null?(tgt-r.curPrice)/r.curPrice*100:null;return[r.name,r.symbol,fmtQty(r.qty),r.unpledgedQty!=null?fmtQty(r.unpledgedQty):'',r.buyPrice,r.invested.toFixed(2),r.curPrice?.toFixed(2)??'',r.dayChange?.toFixed(2)??'',r.dayPL?.toFixed(2)??'',r.curValue?.toFixed(2)??'',r.gain?.toFixed(2)??'',r.gainPct?.toFixed(2)??'',((r.curValue??r.invested)/totalSect*100).toFixed(2),tgt?.toFixed(2)??'',up?.toFixed(2)??''];});const csv=[h,...body].map(r=>r.join(',')).join('\n');const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`portfolio_${currency}_${new Date().toISOString().slice(0,10)}.csv`});a.click();};
+  const buildExportData=()=>{
+    const h=['Stock','Symbol','Qty','Unpledged Qty','Buy Price','Invested','LTP','Day %','Day P&L','Value','P&L','P&L %','Alloc %','Target','Upside %'];
+    const body=rows.map(r=>{const tgt=targets[r.id],up=tgt!=null&&r.curPrice!=null?(tgt-r.curPrice)/r.curPrice*100:null;
+      return[r.name,r.symbol,fmtQty(r.qty),r.unpledgedQty!=null?fmtQty(r.unpledgedQty):'',r.buyPrice,r.invested.toFixed(2),r.curPrice?.toFixed(2)??'',r.dayChange?.toFixed(2)??'',r.dayPL?.toFixed(2)??'',r.curValue?.toFixed(2)??'',r.gain?.toFixed(2)??'',r.gainPct?.toFixed(2)??'',((r.curValue??r.invested)/totalSect*100).toFixed(2),tgt?.toFixed(2)??'',up?.toFixed(2)??''];});
+    return{h,body};
+  };
+  const csvExport=()=>{
+    const {h,body}=buildExportData();
+    const csv=[h,...body].map(r=>r.join(',')).join('\n');
+    const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`portfolio_${currency}_${new Date().toISOString().slice(0,10)}.csv`});
+    a.click();
+  };
+  const xlsxExport=()=>{
+    const {h,body}=buildExportData();
+    const ws=XLSX.utils.aoa_to_sheet([h,...body]);
+    // Auto column widths
+    ws['!cols']=h.map((hdr,i)=>{const max=Math.max(hdr.length,...body.map(r=>String(r[i]||'').length));return{wch:Math.min(max+2,30)};});
+    // Header style (row 1)
+    const range=XLSX.utils.decode_range(ws['!ref']);
+    for(let C=range.s.c;C<=range.e.c;C++){
+      const addr=XLSX.utils.encode_cell({r:0,c:C});
+      if(!ws[addr])continue;
+      ws[addr].s={font:{bold:true},fill:{fgColor:{rgb:'1A1A2E'}},font:{color:{rgb:'76B900'},bold:true}};
+    }
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,currency==='INR'?'Indian Portfolio':'US Portfolio');
+    XLSX.writeFile(wb,`portfolio_${currency}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
   const rp=compact?'7px 12px':'10px 12px';
   const tdB={padding:rp,borderBottom:`1px solid ${T.border}`,whiteSpace:'nowrap'};
   const tdN={...tdB,textAlign:'right'};
@@ -783,8 +1016,14 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
       <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:16}}>
         <StatCard T={T} label="Invested" value={fmt(totalInv,currency)}/>
         <StatCard T={T} label="Current Value" value={fmt(totalCur,currency)} valueColor={T.text}/>
-        <StatCard T={T} label="Total P&L" value={`${totalGain>=0?'+':''}${fmt(Math.abs(totalGain),currency)}`} sub={fmtPct(totalGainP)} valueColor={gColor(totalGain,T)}/>
-        <StatCard T={T} label="Today's P&L" value={`${dayTotal>=0?'+':''}${fmt(Math.abs(dayTotal),currency)}`} valueColor={gColor(dayTotal,T)}/>
+        <StatCard T={T} label="Total P&L"
+          value={`${totalGain>=0?'+':'−'}${fmt(Math.abs(totalGain),currency)}`}
+          sub={currency==='USD'&&usdInr?`≈ ${totalGain>=0?'+':'−'}₹${Math.abs(totalGain*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})} · ${fmtPct(totalGainP)}`:fmtPct(totalGainP)}
+          valueColor={gColor(totalGain,T)}/>
+        <StatCard T={T} label="Today's P&L"
+          value={`${dayTotal>=0?'+':'−'}${fmt(Math.abs(dayTotal),currency)}`}
+          sub={currency==='USD'&&usdInr?`≈ ${dayTotal>=0?'+':'−'}₹${Math.abs(dayTotal*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}`:''}
+          valueColor={gColor(dayTotal,T)}/>
         <StatCard T={T} label="Holdings" value={`${rows.filter(r=>(r.gain??0)>0).length}↑  ${rows.filter(r=>(r.gain??0)<0).length}↓`}/>
       </div>
       {/* Toolbar */}
@@ -794,10 +1033,11 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
           <NvInput value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter holdings…" T={T} style={{paddingLeft:34}}/>
         </div>
         {lastUpdated&&<span style={{fontSize:11,color:T.text3,display:'flex',alignItems:'center',gap:5}}><span style={{width:6,height:6,borderRadius:'50%',background:T.accent,display:'inline-block'}}/>{lastUpdated.toLocaleTimeString()}</span>}
-        <div style={{marginLeft:'auto',display:'flex',gap:8,flexWrap:'wrap'}}>
-          <NvBtn onClick={csvExport} T={T}><Ic.Download/> Export</NvBtn>
+        <div style={{marginLeft:'auto',display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',flexShrink:0}}>
+          <NvBtn onClick={csvExport} T={T}><Ic.Download/> CSV</NvBtn>
+          <NvBtn onClick={xlsxExport} T={T}><Ic.Download/> XLSX</NvBtn>
           <NvBtn onClick={onImportCSV} T={T}><Ic.Upload/> Import</NvBtn>
-          <NvBtn onClick={fetchPrices} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Refreshing…':'Refresh Prices'}</NvBtn>
+          <NvBtn onClick={fetchPrices} disabled={loading} T={T} style={{minWidth:128}}><Ic.Refresh s={loading}/>{loading?'Refreshing…':'Refresh Prices'}</NvBtn>
           <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Holding</NvBtn>
         </div>
       </div>
@@ -813,7 +1053,7 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
                 <NvInput value={srch} onChange={e=>doSearch(e.target.value)} autoFocus onFocus={e=>setFocused(true)} onBlur={()=>setTimeout(()=>setFocused(false),200)} placeholder={currency==='INR'?'e.g. TCS, RELIANCE.NS…':'e.g. AAPL, Tesla…'} T={T}/>
                 {busyS&&<span style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',fontSize:11,color:T.text3}}>…</span>}
                 {focused&&results.length>0&&(
-                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:999,background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:T.r,boxShadow:'0 8px 24px rgba(0,0,0,.3)',overflow:'hidden'}}>
+                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:9999,background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:T.r,boxShadow:'0 8px 24px rgba(0,0,0,.3)',overflow:'hidden'}}>
                     {results.map((r,i)=><div key={r.symbol} onMouseDown={()=>selectResult(r)} style={{padding:'10px 14px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:i<results.length-1?`1px solid ${T.border}`:'none',transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><div><span style={{fontWeight:700,fontSize:13,color:T.accent}}>{r.symbol}</span><span style={{fontSize:12,color:T.text3,marginLeft:8}}>{r.longname||r.shortname||''}</span></div>{r.exchDisp&&<span style={{fontSize:10,background:T.accentBg,color:T.accent,padding:'2px 8px',borderRadius:4,fontWeight:600}}>{r.exchDisp}</span>}</div>)}
                   </div>
                 )}
@@ -879,9 +1119,19 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
                   <td style={{...tdN,color:T.text}}>{fmt(r.invested,currency)}</td>
                   <td style={{...tdN,fontWeight:700,color:T.text}}>{r.curPrice!=null?fmt(r.curPrice,currency):<span style={{color:T.text3,fontSize:10}}>Live…</span>}</td>
                   <td style={{...tdN}}><Badge val={r.dayChange} pct T={T}/></td>
-                  <td style={{...tdN}}><Badge val={r.dayPL} currency={currency} T={T}/></td>
+                  <td style={{...tdN}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1}}>
+                    <Badge val={r.dayPL} currency={currency} T={T}/>
+                    {currency==='USD'&&usdInr&&r.dayPL!=null&&<span style={{fontSize:9,color:gColor(r.dayPL,T),opacity:.7}}>≈ {r.dayPL>=0?'+':'−'}₹{Math.abs(r.dayPL*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>}
+                  </div>
+                </td>
                   <td style={{...tdN,color:T.text}}>{r.curValue!=null?fmt(r.curValue,currency):'—'}</td>
-                  <td style={{...tdN}}><Badge val={r.gain} currency={currency} T={T}/></td>
+                  <td style={{...tdN}}>
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1}}>
+                      <Badge val={r.gain} currency={currency} T={T}/>
+                      {currency==='USD'&&usdInr&&r.gain!=null&&<span style={{fontSize:9,color:gColor(r.gain,T),opacity:.7}}>≈ {r.gain>=0?'+':'−'}₹{Math.abs(r.gain*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>}
+                    </div>
+                  </td>
                   <td style={{...tdN}}><Badge val={r.gainPct} pct T={T}/></td>
                   <td style={{...tdB,textAlign:'right'}}>
                     <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:8}}>
@@ -902,27 +1152,40 @@ function Section({title,flag,accent,rows,currency,targets,onSaveTarget,onSaveUnp
 }
 
 // ── SETTINGS PANEL ────────────────────────────────────────────────────────────
-function SettingsPanel({tweaks,onUpdate,onClose,groqKey,onSaveGroqKey,T}) {
-  const [keyEdit,setKeyEdit]=useState(false);
+function SettingsPanel({tweaks,onUpdate,onClose,groqKey,geminiKey,primaryAI,onSaveAIKeys,T}) {
+  const [editing,setEditing]=useState(null);
   const [newKey,setNewKey]=useState('');
   const [testing,setTesting]=useState(false);
   const [testResult,setTestResult]=useState(null);
-  const testKey=async()=>{
+  const testKey=async(provider)=>{
     setTesting(true);setTestResult(null);
-    try{await callGroq(newKey.trim(),'Reply OK');setTestResult('ok');}
-    catch(e){setTestResult(e.message);}
+    try{
+      if(provider==='groq') await callGroq(newKey.trim(),'Reply OK');
+      else await callGemini(newKey.trim(),'Reply OK');
+      setTestResult('ok');
+    }catch(e){setTestResult(e.message);}
     setTesting(false);
   };
+  const saveKey=(provider)=>{
+    const gk=provider==='groq'?newKey.trim():groqKey||'';
+    const gmk=provider==='gemini'?newKey.trim():geminiKey||'';
+    onSaveAIKeys(gk,gmk,primaryAI);setEditing(null);
+  };
+  const removeKey=(provider)=>onSaveAIKeys(provider==='groq'?'':groqKey||'',provider==='gemini'?'':geminiKey||'',primaryAI);
+  const setPrim=(p)=>onSaveAIKeys(groqKey||'',geminiKey||'',p);
+  const PROVS=[
+    {id:'groq',   label:'Groq',   icon:'⚡', grad:'linear-gradient(135deg,#f55036,#ff8c00)', key:groqKey, ph:'gsk_…'},
+    {id:'gemini', label:'Gemini', icon:'✦', grad:'linear-gradient(135deg,#4285f4,#34a853)', key:geminiKey, ph:'AIza…'},
+  ];
   return(
     <div style={{position:'fixed',inset:0,zIndex:1500,display:'flex',alignItems:'flex-start',justifyContent:'flex-end',paddingTop:52}}>
       <div onClick={onClose} style={{position:'absolute',inset:0}}/>
-      <div style={{position:'relative',width:320,background:T.surface,borderRadius:T.r,border:`1px solid ${T.border2}`,boxShadow:'0 16px 48px rgba(0,0,0,.4)',margin:'8px 8px 0 0',overflow:'hidden'}}>
+      <div style={{position:'relative',width:340,background:T.surface,borderRadius:T.r,border:`1px solid ${T.border2}`,boxShadow:'0 16px 48px rgba(0,0,0,.4)',margin:'8px 8px 0 0',overflow:'hidden'}}>
         <div style={{padding:'14px 18px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <span style={{fontSize:14,fontWeight:700,color:T.text}}>Settings</span>
           <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,display:'flex',padding:4}}><Ic.X/></button>
         </div>
-        <div style={{padding:'14px 18px',display:'flex',flexDirection:'column',gap:14,maxHeight:'80vh',overflowY:'auto'}}>
-          {/* Toggles */}
+        <div style={{padding:'14px 18px',display:'flex',flexDirection:'column',gap:14,maxHeight:'85vh',overflowY:'auto'}}>
           {[{label:'Dark Mode',key:'darkMode'},{label:'Compact Rows',key:'compactRows'},{label:'Show P&L Charts',key:'showCharts'}].map(({label,key})=>(
             <div key={key} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span style={{fontSize:13,color:T.text2}}>{label}</span>
@@ -935,36 +1198,47 @@ function SettingsPanel({tweaks,onUpdate,onClose,groqKey,onSaveGroqKey,T}) {
             <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:13,color:T.text2}}>Auto Refresh</span><span style={{fontSize:13,fontWeight:600,color:T.accent}}>{tweaks.autoRefreshMins} min</span></div>
             <input type="range" min={1} max={30} step={1} value={tweaks.autoRefreshMins} onChange={e=>onUpdate('autoRefreshMins',parseInt(e.target.value))} style={{accentColor:T.accent}}/>
           </div>
-          {/* Groq Section */}
           <div style={{borderTop:`1px solid ${T.border}`,paddingTop:14}}>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-              <div style={{width:22,height:22,borderRadius:5,background:'linear-gradient(135deg,#f55036,#ff8c00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11}}>⚡</div>
-              <span style={{fontSize:13,fontWeight:700,color:T.text}}>Groq AI</span>
-              {groqKey?<span style={{fontSize:10,background:T.successBg,color:T.success,padding:'2px 7px',borderRadius:10,fontWeight:700}}>Active</span>:<span style={{fontSize:10,background:T.surface3,color:T.text3,padding:'2px 7px',borderRadius:10}}>Inactive — Yahoo only</span>}
-            </div>
-            {!keyEdit?(
-              <div style={{display:'flex',gap:8}}>
-                <NvBtn onClick={()=>{setNewKey(groqKey||'');setKeyEdit(true);setTestResult(null);}} T={T}>{groqKey?'Update Key':'Add Key'}</NvBtn>
-                {groqKey&&<NvBtn onClick={()=>onSaveGroqKey('')} variant="danger" T={T}>Remove</NvBtn>}
-              </div>
-            ):(
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                <NvInput value={newKey} onChange={e=>setNewKey(e.target.value)} placeholder="AIza…" T={T} style={{fontFamily:'monospace',fontSize:11}}/>
-                {testResult==='ok'&&<span style={{fontSize:11,color:T.success}}>✓ Key works</span>}
-                {testResult&&testResult!=='ok'&&<span style={{fontSize:11,color:T.danger}}>✗ {testResult}</span>}
-                <div style={{display:'flex',gap:6}}>
-                  <NvBtn onClick={testKey} disabled={testing||!newKey.trim()} T={T}>{testing?'Testing…':'Test'}</NvBtn>
-                  <NvBtn onClick={()=>{if(newKey.trim())onSaveGroqKey(newKey.trim());setKeyEdit(false);}} variant="primary" disabled={!newKey.trim()} T={T}>Save</NvBtn>
-                  <NvBtn onClick={()=>setKeyEdit(false)} T={T}>Cancel</NvBtn>
+            <div style={{fontSize:11,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>AI Providers</div>
+            {PROVS.map(prov=>{
+              const isActive=!!prov.key,isPrimary=primaryAI===prov.id,isEditing=editing===prov.id;
+              return(
+                <div key={prov.id} style={{marginBottom:10,background:T.surface3,borderRadius:8,border:`1px solid ${isPrimary&&isActive?T.accent:T.border}`,padding:'10px 12px',transition:'border-color .15s'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:isEditing?10:4}}>
+                    <div style={{width:24,height:24,borderRadius:5,background:prov.grad,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,flexShrink:0}}>{prov.icon}</div>
+                    <span style={{fontSize:12,fontWeight:700,color:T.text,flex:1}}>{prov.label}</span>
+                    {isActive?<span style={{fontSize:9,background:T.successBg,color:T.success,padding:'2px 6px',borderRadius:8,fontWeight:700}}>Active</span>:<span style={{fontSize:9,background:T.surface4,color:T.text3,padding:'2px 6px',borderRadius:8}}>Off</span>}
+                    {isActive&&<button onClick={()=>setPrim(prov.id)} style={{fontSize:9,padding:'2px 7px',borderRadius:8,border:`1px solid ${isPrimary?T.accent:T.border2}`,background:isPrimary?T.accentBg:'transparent',color:isPrimary?T.accent:T.text3,cursor:'pointer',fontWeight:600}}>{isPrimary?'★ Primary':'Set Primary'}</button>}
+                  </div>
+                  {isEditing?(
+                    <div style={{display:'flex',flexDirection:'column',gap:7}}>
+                      <NvInput value={newKey} onChange={e=>setNewKey(e.target.value)} placeholder={prov.ph} T={T} style={{fontFamily:'monospace',fontSize:11}}/>
+                      {testResult==='ok'&&<span style={{fontSize:11,color:T.success}}>✓ Key works</span>}
+                      {testResult&&testResult!=='ok'&&<span style={{fontSize:11,color:T.danger,wordBreak:'break-word'}}>✗ {testResult}</span>}
+                      <div style={{display:'flex',gap:5}}>
+                        <NvBtn onClick={()=>testKey(prov.id)} disabled={testing||!newKey.trim()} T={T}>{testing?'…':'Test'}</NvBtn>
+                        <NvBtn onClick={()=>saveKey(prov.id)} variant="primary" disabled={!newKey.trim()} T={T}>Save</NvBtn>
+                        <NvBtn onClick={()=>{setEditing(null);setTestResult(null);}} T={T}>Cancel</NvBtn>
+                      </div>
+                    </div>
+                  ):(
+                    <div style={{display:'flex',gap:6}}>
+                      <NvBtn onClick={()=>{setNewKey(prov.key||'');setEditing(prov.id);setTestResult(null);}} T={T}>{isActive?'Update':'Add Key'}</NvBtn>
+                      {isActive&&<NvBtn onClick={()=>removeKey(prov.id)} variant="danger" T={T}>Remove</NvBtn>}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })}
+            {groqKey&&geminiKey&&<div style={{fontSize:11,color:T.text3}}>Both configured — <b style={{color:T.text}}>{primaryAI==='groq'?'Groq':'Gemini'}</b> is primary with auto-fallback.</div>}
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+
 
 // ── PORTFOLIO TABS ────────────────────────────────────────────────────────────
 function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T}) {
@@ -988,7 +1262,7 @@ function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T})
 }
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
-export default function App() {
+function AppInner() {
   const [tweaks,setTweaks]=useState(()=>{try{const s=localStorage.getItem('pm_tweaks');return s?{...TWEAK_DEF,...JSON.parse(s)}:TWEAK_DEF;}catch{return TWEAK_DEF;}});
   const [showSettings,setShowSettings]=useState(false);
   const [importModal,setImportModal]=useState(null);
@@ -1004,12 +1278,36 @@ export default function App() {
   const [openStockTabs,setOpenStockTabs]=useState([]);
   const [stockDetails,setStockDetails]=useState({});
 
-  // Groq AI state
-  const [groqKey,setGroqKey]=useState(()=>localStorage.getItem('pm_groq_key')); // null=never asked, ''=skipped
-  const [showGroqSetup,setShowGroqSetup]=useState(()=>localStorage.getItem('pm_groq_key')===null);
-  const [groqAnalyses,setGroqAnalyses]=useState({}); // {symbol: {loading, data, error}}
+  // AI provider state
+  const [groqKey,setGroqKey]=useState(()=>localStorage.getItem('pm_groq_key'));
+  const [geminiKey,setGeminiKey]=useState(()=>localStorage.getItem('pm_gemini_key'));
+  const [primaryAI,setPrimaryAI]=useState(()=>localStorage.getItem('pm_primary_ai')||'groq');
+  const [showAISetup,setShowAISetup]=useState(()=>
+    localStorage.getItem('pm_groq_key')===null && localStorage.getItem('pm_gemini_key')===null
+  );
+  const [aiAnalyses,setAiAnalyses]=useState({});
+  const [usdInr,setUsdInr]=useState(null); // live exchange rate
 
-  const saveGroqKey=k=>{localStorage.setItem('pm_groq_key',k);setGroqKey(k);setShowGroqSetup(false);};
+  // Fetch USD/INR rate from Yahoo Finance
+  useEffect(()=>{
+    const fetchFx=async()=>{
+      try{
+        const r=await fetch('https://query1.finance.yahoo.com/v8/finance/chart/USDINR%3DX?interval=1d&range=1d',{headers:{Accept:'application/json'}});
+        if(r.ok){const j=await r.json();const price=j?.chart?.result?.[0]?.meta?.regularMarketPrice;if(price)setUsdInr(price);}
+      }catch{}
+    };
+    fetchFx();
+    const t=setInterval(fetchFx,10*60*1000); // refresh every 10 min
+    return()=>clearInterval(t);
+  },[]);
+
+  const saveAIKeys=(gk,gmk,prim)=>{
+    localStorage.setItem('pm_groq_key',gk);
+    localStorage.setItem('pm_gemini_key',gmk);
+    localStorage.setItem('pm_primary_ai',prim);
+    setGroqKey(gk); setGeminiKey(gmk); setPrimaryAI(prim);
+    setShowAISetup(false);
+  };
   const activePf=useMemo(()=>portfolios.find(p=>p.id===activeId)||portfolios[0],[portfolios,activeId]);
   const holdings=activePf?.holdings??[],targets=activePf?.targets??{};
   const setHoldings=fn=>setPortfolios(ps=>ps.map(p=>p.id===activeId?{...p,holdings:typeof fn==='function'?fn(p.holdings):fn}:p));
@@ -1029,17 +1327,34 @@ export default function App() {
   const fetchPrices=useCallback(async()=>{
     if(!holdings.length)return;setLoading(true);setError(null);const out={};
     await Promise.all(holdings.map(async h=>{try{const res=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(h.symbol)}?interval=1d&range=1d`,{headers:{Accept:'application/json'}});if(!res.ok)throw new Error();const json=await res.json();const meta=json?.chart?.result?.[0]?.meta;if(meta?.regularMarketPrice){out[h.symbol]={current:meta.regularMarketPrice,prev:meta.chartPreviousClose??meta.regularMarketPrice,currency:meta.currency??(isUS(h.symbol)?'USD':'INR')};}else out[h.symbol]=null;}catch{out[h.symbol]=null;}}));
-    if(holdings.length&&!Object.values(out).some(Boolean))setError('Live prices unavailable.');
-    setPrices(out);setLastUpdated(new Date());setLoading(false);
-  },[holdings]);
-  useEffect(()=>{fetchPrices();const t=setInterval(fetchPrices,(tweaks.autoRefreshMins||5)*60*1000);return()=>clearInterval(t);},[fetchPrices,tweaks.autoRefreshMins]);
+    // Only update entries that returned data; preserve last-known for failures
+    const merged={...prices};
+    let anyNew=false;
+    for(const [sym,val] of Object.entries(out)){
+      if(val){merged[sym]=val;anyNew=true;}
+      // if null, keep merged[sym] as-is (last-known price)
+    }
+    if(!anyNew&&holdings.length){
+      setError('Live prices unavailable — showing last known prices.');
+    } else {
+      setError(null);
+    }
+    setPrices({...merged});setLastUpdated(new Date());setLoading(false);
+  },[holdings,prices]);
+  useEffect(()=>{
+    fetchPrices();
+    const ms=(tweaks.autoRefreshMins||5)*60*1000;
+    const t=setInterval(fetchPrices,ms);
+    return()=>clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[fetchPrices,tweaks.autoRefreshMins]);
   const fetchStockDetail=useCallback(async(symbol,range='3mo')=>{
     setStockDetails(prev=>({...prev,[symbol]:{...prev[symbol],loading:true,range}}));
     try{
       // ── 1. Chart API — history + meta (52W, marketCap, volume) ──────────────
       const chartRes=await fetch(
         `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}&includePrePost=false`,
-        {headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}}
+        {headers:{Accept:'application/json'}}
       );
       const cj=await chartRes.json();
       const result=cj?.chart?.result?.[0]||{};
@@ -1050,58 +1365,73 @@ export default function App() {
         change:i>0&&q.close?.[i-1]?((q.close[i]-q.close[i-1])/q.close[i-1])*100:0,
       })).filter(d=>d.close!=null);
 
-      // ── 2. v7 Quote API — P/E, EPS, Beta, Div Yield (no cookie needed) ─────
-      let quoteData={};
-      try{
-        // No &fields= param — it filters OUT fields on some Yahoo endpoints
-        const qRes=await fetch(
-          `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US&corsDomain=finance.yahoo.com`,
-          {headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}}
-        );
-        if(qRes.ok){
-          const qj=await qRes.json();
-          quoteData=qj?.quoteResponse?.result?.[0]||{};
-        }
-        // Fallback to query2 if query1 returned empty
-        if(!quoteData.symbol){
-          const q2=await fetch(
-            `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US`,
-            {headers:{Accept:'application/json','User-Agent':'Mozilla/5.0'}}
-          );
-          if(q2.ok){const j=await q2.json();quoteData=j?.quoteResponse?.result?.[0]||{};}
-        }
-      }catch{/* quoteData stays empty */}
-
-      // ── 3. Build normalised summary from both sources ────────────────────────
+      // ── 2. Fundamentals: try v10 quoteSummary → v7 quote → chart meta ─────────
       const n=v=>v==null?null:(typeof v==='object'&&'raw' in v?v.raw:v);
-      // Yahoo returns beta as 'beta' or 'beta3Year' depending on endpoint/region
-      const betaVal=n(quoteData.beta)??n(quoteData.beta3Year)??n(meta.beta);
-      // Div yield: Yahoo returns as decimal (0.005 = 0.5%) or already pct
-      const divRaw=n(quoteData.trailingAnnualDividendYield)??n(quoteData.dividendYield);
+      let qd={};  // v7 quote data
+      let qs={};  // v10 quoteSummary data
+
+      // Try v10 quoteSummary (best structured data, works without cookies)
+      for(const host of ['query1','query2']){
+        try{
+          const r=await fetch(
+            `https://${host}.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=summaryDetail,defaultKeyStatistics,financialData,price`,
+            {headers:{Accept:'application/json'}}
+          );
+          if(r.ok){
+            const j=await r.json();
+            const res=j?.quoteSummary?.result?.[0];
+            if(res){qs=res;break;}
+          }
+        }catch{}
+      }
+
+      // Try v7 quote as supplementary (good for marketCap, volume, 52W)
+      for(const host of ['query1','query2']){
+        try{
+          const r=await fetch(
+            `https://${host}.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US`,
+            {headers:{Accept:'application/json'}}
+          );
+          if(r.ok){
+            const j=await r.json();
+            const res=j?.quoteResponse?.result?.[0];
+            if(res?.symbol){qd=res;break;}
+          }
+        }catch{}
+      }
+
+      // ── 3. Merge all sources — v10 wins for fundamentals ────────────────────
+      const sd=qs.summaryDetail||{}, fd=qs.financialData||{}, ks=qs.defaultKeyStatistics||{}, pd=qs.price||{};
+      const betaVal=n(sd.beta)??n(ks.beta)??n(qd.beta)??n(qd.beta3Year)??n(meta.beta);
+      const divYield=n(sd.dividendYield)??n(sd.trailingAnnualDividendYield)??n(qd.trailingAnnualDividendYield);
       const summary={
         price:{
-          marketCap:            n(quoteData.marketCap)           ?? n(meta.marketCap),
-          regularMarketVolume:  n(quoteData.regularMarketVolume) ?? n(meta.regularMarketVolume),
-          shortName:            quoteData.shortName               ?? meta.shortName,
-          recommendationKey:    quoteData.recommendationKey,
-          targetMeanPrice:      n(quoteData.targetMeanPrice),
+          marketCap:           n(pd.marketCap)??n(qd.marketCap)??n(meta.marketCap),
+          regularMarketVolume: n(pd.regularMarketVolume)??n(qd.regularMarketVolume)??n(meta.regularMarketVolume),
+          shortName:           pd.shortName??qd.shortName??meta.shortName,
+          recommendationKey:   fd.recommendationKey??qd.recommendationKey,
+          targetMeanPrice:     n(fd.targetMeanPrice)??n(qd.targetMeanPrice),
         },
         summaryDetail:{
-          trailingPE:       n(quoteData.trailingPE),
-          fiftyTwoWeekHigh: n(quoteData.fiftyTwoWeekHigh) ?? n(meta.fiftyTwoWeekHigh),
-          fiftyTwoWeekLow:  n(quoteData.fiftyTwoWeekLow)  ?? n(meta.fiftyTwoWeekLow),
+          trailingPE:       n(sd.trailingPE)??n(qd.trailingPE),
+          fiftyTwoWeekHigh: n(sd.fiftyTwoWeekHigh)??n(qd.fiftyTwoWeekHigh)??n(meta.fiftyTwoWeekHigh),
+          fiftyTwoWeekLow:  n(sd.fiftyTwoWeekLow)??n(qd.fiftyTwoWeekLow)??n(meta.fiftyTwoWeekLow),
           beta:             betaVal,
-          dividendYield:    divRaw,
+          dividendYield:    divYield,
         },
         defaultKeyStatistics:{
-          trailingEps:             n(quoteData.epsTrailingTwelveMonths),
-          numberOfAnalystOpinions: n(quoteData.numberOfAnalystOpinions),
+          trailingEps:             n(ks.trailingEps)??n(qd.epsTrailingTwelveMonths),
+          numberOfAnalystOpinions: n(ks.numberOfAnalystOpinions)??n(qd.numberOfAnalystOpinions),
         },
         financialData:{
-          recommendationKey: quoteData.recommendationKey,
-          targetMeanPrice:   n(quoteData.targetMeanPrice),
+          recommendationKey:    fd.recommendationKey??qd.recommendationKey,
+          targetMeanPrice:      n(fd.targetMeanPrice)??n(qd.targetMeanPrice),
+          targetHighPrice:      n(fd.targetHighPrice),
+          targetLowPrice:       n(fd.targetLowPrice),
+          targetMeanPrice2:     n(fd.targetMeanPrice),
+          numberOfAnalystOpinions: n(fd.numberOfAnalystOpinions),
         },
-        recommendationTrend: null,
+        recommendationTrend: qs.recommendationTrend||null,
       };
 
       setStockDetails(prev=>({...prev,[symbol]:{history,summary,loading:false,error:null,range}}));
@@ -1109,38 +1439,32 @@ export default function App() {
       setStockDetails(prev=>({...prev,[symbol]:{history:[],summary:{},loading:false,error:'Failed to load data',range}}));
     }
   },[]);
-  const fetchGroqAnalysis=useCallback(async(symbol,holding,curPrice,currency)=>{
-    if(!groqKey)return;
-    setGroqAnalyses(prev=>({...prev,[symbol]:{...prev[symbol],loading:true,error:null}}));
-    const positionCtx=holding
-      ?`The user holds ${holding.qty} shares bought at ${currency==='INR'?'₹':'$'}${holding.buyPrice}. Current price: ${currency==='INR'?'₹':'$'}${curPrice?.toFixed(2)??'unknown'}.`
-      :'The user does not currently hold this stock.';
-    const prompt=`You are a concise financial analyst. Analyse the stock ${symbol} (${holding?.name||symbol}).
-${positionCtx}
-Respond ONLY with a JSON object (no markdown fences) with these exact keys:
-{
-  "overview": "2-sentence company description",
-  "sentiment": "Bullish | Neutral | Bearish",
-  "performance": "2-sentence recent performance summary",
-  "opportunities": ["point 1", "point 2", "point 3"],
-  "risks": ["risk 1", "risk 2", "risk 3"],
-  "positionComment": "1 sentence about user position or null if not held",
-  "disclaimer": "Not financial advice. For informational purposes only."
-}`;
+  const fetchAIAnalysis=useCallback(async(symbol,holding,curPrice,currency,provider)=>{
+    const prim=provider||primaryAI;
+    if(!groqKey&&!geminiKey)return;
+    setAiAnalyses(prev=>({...prev,[symbol]:{...prev[symbol],loading:true,error:null}}));
+    const cur=currency==='INR'?'₹':'$';
+    const pos=holding
+      ?`The user holds ${holding.qty} shares bought at ${cur}${holding.buyPrice}. Current price: ${cur}${curPrice?.toFixed(2)??'unknown'}.`
+      :'The user does not hold this stock.';
+    const prompt=`You are a concise financial analyst. Analyse ${symbol} (${holding?.name||symbol}).
+${pos}
+Respond ONLY as a JSON object with these keys:
+{"overview":"2-sentence description","sentiment":"Bullish|Neutral|Bearish","performance":"2-sentence recent performance","opportunities":["pt1","pt2","pt3"],"risks":["r1","r2","r3"],"positionComment":"1 sentence on user position or null","disclaimer":"Not financial advice."}`;
     try{
-      const text=await callGroq(groqKey,prompt,false);
+      const {text,usedProvider}=await callAI(groqKey,geminiKey,prim,prompt);
       const data=extractJSON(text);
-      if(data)setGroqAnalyses(prev=>({...prev,[symbol]:{loading:false,data,error:null}}));
-      else setGroqAnalyses(prev=>({...prev,[symbol]:{loading:false,data:null,error:'Could not parse AI response.'}}));
+      if(data) setAiAnalyses(prev=>({...prev,[symbol]:{loading:false,data,error:null,provider:usedProvider}}));
+      else setAiAnalyses(prev=>({...prev,[symbol]:{loading:false,data:null,error:'Could not parse AI response.',provider:usedProvider}}));
     }catch(e){
-      setGroqAnalyses(prev=>({...prev,[symbol]:{loading:false,data:null,error:`Groq error: ${e.message}`}}));
+      setAiAnalyses(prev=>({...prev,[symbol]:{loading:false,data:null,error:e.message,provider:null}}));
     }
-  },[groqKey]);
+  },[groqKey,geminiKey,primaryAI]);
 
   const openStockTab=useCallback((symbol)=>{
     if(!openStockTabs.find(t=>t.symbol===symbol))setOpenStockTabs(prev=>[...prev,{symbol}]);
     setMainTab(`stock:${symbol}`);
-    const ex=stockDetails[symbol];if(!ex||ex.error)fetchStockDetail(symbol,'3mo');
+    const ex=stockDetails[symbol];if(!ex||ex.error||!ex.history?.length)fetchStockDetail(symbol,'3mo');
   },[openStockTabs,stockDetails,fetchStockDetail]);
   const closeStockTab=useCallback((symbol)=>{setOpenStockTabs(prev=>prev.filter(t=>t.symbol!==symbol));if(mainTab===`stock:${symbol}`)setMainTab('IN');},[mainTab]);
   const rows=useMemo(()=>holdings.map(h=>{const p=prices[h.symbol],cur=p?.currency??(isUS(h.symbol)?'USD':'INR'),cp=p?.current??null;const inv=parseFloat((h.buyPrice*h.qty).toFixed(8)),cv=cp!=null?parseFloat((cp*h.qty).toFixed(2)):null;const g=cv!=null?cv-inv:null,gp=g!=null?(g/inv)*100:null,dc=p?((p.current-p.prev)/p.prev)*100:null,dp=dc!=null&&cv!=null?(dc/100)*cv:null;return{...h,currency:cur,curPrice:cp,invested:inv,curValue:cv,gain:g,gainPct:gp,dayChange:dc,dayPL:dp};}),[holdings,prices]);
@@ -1156,7 +1480,7 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
   const sharedProps={fetchPrices,loading,error,lastUpdated,targets,onSaveTarget:saveTarget,onSaveUnpledged:saveUnpledgedQty,onRemove:removeHolding,compact:tweaks.compactRows,addHolding,T};
 
   // Sidebar content for IN/US views
-  const SidebarContent=({sRows,pie,currency,invAmt,totalAmt,gain,dayGain,offset})=>{
+  const SidebarContent=({sRows,pie,currency,usdInr,invAmt,totalAmt,gain,dayGain,offset})=>{
     const tRows=sRows.filter(r=>targets[r.id]!=null&&r.curPrice!=null);
     return(
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -1173,13 +1497,25 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
               null,
               {l:'Invested',v:fmt(invAmt,currency)},
               {l:'Current Value',v:fmt(totalAmt,currency)},
-              {l:'Total P&L',v:`${gain>=0?'+':''}${fmt(Math.abs(gain),currency)}`,vc:gColor(gain,T)},
-              {l:"Today's P&L",v:`${dayGain>=0?'+':''}${fmt(Math.abs(dayGain),currency)}`,vc:gColor(dayGain,T)},
+              {l:'Total P&L',v:`${gain>=0?'+':'−'}${fmt(Math.abs(gain),currency)}`,vc:gColor(gain,T),sub:currency==='USD'&&usdInr?`≈ ${gain>=0?'+':'−'}₹${Math.abs(gain*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}`:''},
+              {l:"Today's P&L",v:`${dayGain>=0?'+':'−'}${fmt(Math.abs(dayGain),currency)}`,vc:gColor(dayGain,T),sub:currency==='USD'&&usdInr?`≈ ${dayGain>=0?'+':'−'}₹${Math.abs(dayGain*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}`:''},
             ].map((row,i)=>row===null?<div key={i} style={{height:1,background:T.border,margin:'8px 0'}}/>
-              :<div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',fontSize:12,borderBottom:`1px solid ${T.border}`}}><span style={{color:T.text3}}>{row.l}</span><span style={{fontWeight:600,color:row.vc||T.text}}>{row.v}</span></div>
+              :<div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'5px 0',fontSize:12,borderBottom:`1px solid ${T.border}`}}>
+                <span style={{color:T.text3}}>{row.l}</span>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontWeight:600,color:row.vc||T.text}}>{row.v}</div>
+                  {row.sub&&<div style={{fontSize:10,color:row.vc||T.text3,opacity:.7}}>{row.sub}</div>}
+                </div>
+              </div>
             )}
           </div>
         </div>
+        {currency==='USD'&&usdInr&&(
+          <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,padding:'8px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:11,color:T.text3,fontWeight:600}}>💱 USD/INR</span>
+            <span style={{fontSize:12,fontWeight:700,color:T.text}}>₹{usdInr.toFixed(2)}</span>
+          </div>
+        )}
         {pie.length>0&&<DonutChart T={T} title="Allocation" data={pie} currency={currency} offset={offset}/>}
         {tweaks.showCharts&&sRows.length>0&&<PLBarChart rows={sRows} currency={currency} T={T}/>}
         {tRows.length>0&&(
@@ -1223,14 +1559,14 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
       `}</style>
 
       {/* ── Title Bar ── */}
-      <div style={{background:T.sidebar,height:50,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px',borderBottom:`1px solid ${T.border}`,WebkitAppRegion:'drag',position:'relative',zIndex:100}}>
+      <div style={{background:T.sidebar,height:64,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 20px',borderBottom:`1px solid ${T.border}`,WebkitAppRegion:'drag',position:'relative',zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:12,WebkitAppRegion:'no-drag'}}>
           <div style={{width:32,height:32,borderRadius:8,background:T.accent,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.1 · Groq</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.2</div>
           </div>
         </div>
 
@@ -1244,9 +1580,15 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
           </div>}
           {usRows.length>0&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'5px 12px',background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`}}>
             <span style={{fontSize:12}}>🇺🇸</span>
-            <span style={{fontSize:13,fontWeight:700,color:gColor(gainUS,T)}}>{gainUS>=0?'+':'−'}${Math.abs(gainUS).toLocaleString('en-US',{maximumFractionDigits:0})}</span>
-            <div style={{width:1,height:14,background:T.border}}/>
-            <span style={{fontSize:11,color:gColor(dayUS,T)}}>{dayUS>=0?'+':'−'}${Math.abs(dayUS).toLocaleString('en-US',{maximumFractionDigits:0})} today</span>
+            <div style={{display:'flex',flexDirection:'column',gap:1}}>
+              <span style={{fontSize:13,fontWeight:700,color:gColor(gainUS,T)}}>{gainUS>=0?'+':'−'}${Math.abs(gainUS).toLocaleString('en-US',{maximumFractionDigits:0})}</span>
+              {usdInr&&<span style={{fontSize:9,color:gColor(gainUS,T),opacity:.75}}>≈ {gainUS>=0?'+':'−'}₹{Math.abs(gainUS*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>}
+            </div>
+            <div style={{width:1,height:18,background:T.border}}/>
+            <div style={{display:'flex',flexDirection:'column',gap:1}}>
+              <span style={{fontSize:11,color:gColor(dayUS,T)}}>{dayUS>=0?'+':'−'}${Math.abs(dayUS).toLocaleString('en-US',{maximumFractionDigits:0})} today</span>
+              {usdInr&&<span style={{fontSize:9,color:gColor(dayUS,T),opacity:.75}}>≈ {dayUS>=0?'+':'−'}₹{Math.abs(dayUS*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>}
+            </div>
           </div>}
         </div>
 
@@ -1271,7 +1613,7 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
       <div style={{flex:1,overflow:'hidden',display:'flex'}}>
 
         {/* Left Sidebar */}
-        <div style={{width:160,background:T.sidebar,borderRight:`1px solid ${T.border}`,display:'flex',flexDirection:'column',flexShrink:0,overflowY:'auto'}}>
+        <div style={{width:152,background:T.sidebar,borderRight:`1px solid ${T.border}`,display:'flex',flexDirection:'column',flexShrink:0,overflowY:'auto'}}>
           <div style={{padding:'16px 12px 8px',fontSize:10,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.08em'}}>Portfolios</div>
           {/* Main nav: IN | US */}
           {NAV.map(nav=>{
@@ -1305,22 +1647,21 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
         {/* Main Content */}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
           {activeStock?(
-            <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)}
-            groqKey={groqKey} groqAnalysis={groqAnalyses[activeStock]} onGroqRefresh={()=>{const r=rows.find(r=>r.symbol===activeStock);fetchGroqAnalysis(activeStock,r,r?.curPrice,r?.currency);}} T={T}/>
+            <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
           ):(
             <>
               {/* Portfolio sub-tabs */}
               <PortfolioTabs portfolios={portfolios} activeId={activeId} onSwitch={setActiveId} onAdd={addPortfolio} onRename={renamePortfolio} onDelete={deletePortfolio} T={T}/>
               {/* Main grid */}
-              <div style={{flex:1,overflow:'hidden',display:'grid',gridTemplateColumns:'minmax(0,1fr) clamp(240px,22vw,290px)',gap:0}}>
+              <div style={{flex:1,overflow:'hidden',display:'grid',gridTemplateColumns:'minmax(0,1fr) clamp(220px,20vw,280px)',gap:0}}>
                 <div style={{overflowY:'auto',padding:20}}>
                   {mainTab==='IN'&&<Section title="Indian Equity" flag="🇮🇳" accent={T.inColor} rows={inRows} currency="INR" onImportCSV={()=>setImportModal('IN')} onRowClick={openStockTab} {...sharedProps}/>}
-                  {mainTab==='US'&&<Section title="US Equity" flag="🇺🇸" accent={T.usColor} rows={usRows} currency="USD" onImportCSV={()=>setImportModal('US')} onRowClick={openStockTab} {...sharedProps}/>}
+                  {mainTab==='US'&&<Section title="US Equity" flag="🇺🇸" accent={T.usColor} rows={usRows} currency="USD" usdInr={usdInr} onImportCSV={()=>setImportModal('US')} onRowClick={openStockTab} {...sharedProps}/>}
                 </div>
                 <div style={{overflowY:'auto',padding:'20px 16px 20px 0',borderLeft:`1px solid ${T.border}`}}>
                   <div style={{padding:'0 0 0 16px'}}>
                     {mainTab==='IN'&&<SidebarContent sRows={inRows} pie={inPie} currency="INR" invAmt={invIN} totalAmt={totalIN} gain={gainIN} dayGain={dayIN} offset={0}/>}
-                    {mainTab==='US'&&<SidebarContent sRows={usRows} pie={usPie} currency="USD" invAmt={invUS} totalAmt={totalUS} gain={gainUS} dayGain={dayUS} offset={6}/>}
+                    {mainTab==='US'&&<SidebarContent sRows={usRows} pie={usPie} currency="USD" usdInr={usdInr} invAmt={invUS} totalAmt={totalUS} gain={gainUS} dayGain={dayUS} offset={6}/>}
                   </div>
                 </div>
               </div>
@@ -1329,9 +1670,17 @@ Respond ONLY with a JSON object (no markdown fences) with these exact keys:
         </div>
       </div>
 
-      {showGroqSetup&&<GroqSetupModal onSave={saveGroqKey} T={T}/>}
-      {showSettings&&<SettingsPanel tweaks={tweaks} onUpdate={(k,v)=>setTweaks(p=>({...p,[k]:v}))} onClose={()=>setShowSettings(false)} groqKey={groqKey} onSaveGroqKey={saveGroqKey} T={T}/>}
+      {showAISetup&&<AISetupModal onSave={saveAIKeys} T={T}/> }
+      {showSettings&&<SettingsPanel tweaks={tweaks} onUpdate={(k,v)=>setTweaks(p=>({...p,[k]:v}))} onClose={()=>setShowSettings(false)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} onSaveAIKeys={saveAIKeys} T={T}/>}
       {importModal&&<CSVImportModal market={importModal} onImport={importHoldings} onClose={()=>setImportModal(null)} T={T}/>}
     </div>
+  );
+}
+
+export default function App() {
+  return(
+    <ErrorBoundary>
+      <AppInner/>
+    </ErrorBoundary>
   );
 }
