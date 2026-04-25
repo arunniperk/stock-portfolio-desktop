@@ -1,44 +1,52 @@
 # Stock Portfolio Monitor
 
-A high-performance **Windows 11 desktop application** for tracking personal stock portfolios across Indian and US markets. Built with **React 18** and **Vite**, wrapped in an **Electron** shell — with NVIDIA-style dark UI, dual AI analysis (Groq + Gemini), real-time Yahoo Finance data, and built-in tax planning tools.
+A high-performance **Windows 11 desktop application** for managing personal stock portfolios across Indian and US markets. Built with **React 18 + Vite + Electron** — NVIDIA-style dark UI, dual AI analysis, real-time Yahoo Finance data, tax planning, sector analysis, benchmark comparison, and full financial toolset.
 
 ---
 
-## 🚀 Key Features
+## 🚀 Features
 
 ### Portfolio Management
-- **Multi-Market Support** — Dedicated tabs for **Indian Equity (₹ INR)** and **US Equity ($ USD)**
-- **Multi-Portfolio** — Create, rename, delete multiple portfolios
-- **Unpledged Quantity Tracking** — Track pledged vs free shares per holding
-- **Analyst Targets** — Set, revise, clear price targets; upside/downside % shown inline
-- **CSV & XLSX Export** — Full metrics export in both formats
-- **CSV Import** — Drag-and-drop with column auto-detection
+- **Multi-market** — Indian Equity (₹) and US Equity ($) in separate tabs
+- **Multi-portfolio** — Create, rename, delete multiple portfolios
+- **Unpledged Qty** — Track pledged vs free shares per holding
+- **Analyst Targets** — Set/revise targets; upside/downside % shown inline
+- **USD/INR live rate** — All US P&L shown in USD + INR equivalent
+- **CSV & XLSX export** — Full metrics in both formats
+- **CSV import** — Drag-and-drop with column auto-detection
 
-### Stock Detail View
-- **Click any stock** to open a dedicated tab
-- **Interactive SVG Price Chart** — 1M/3M/6M/1Y range selector with buy price and target overlays
-- **Day-wise P&L Table** — From 30 Mar 2026 · Bar chart + Cumulative P&L column
-- **Fundamentals Panel** — Market Cap, P/E, EPS, 52W High/Low, Volume, Beta, Div Yield
-- **Your Position Panel** — Qty, Unpledged Qty, Invested, Market Value, Unrealized P&L
-- **Analyst Consensus** — Recommendation, analyst count, mean target price
-
-### New in v4.3 — Tools
-- **👁 Watchlist** — Track stocks you're researching. Set target entry and exit prices. Visual alerts when price is near entry (within 5%) or hits exit target. Search autocomplete, notes, CSV export
-- **📋 Buy Lots Tracker** — Record individual buy transactions per stock with date. Calculates weighted average buy price per stock. Shows per-lot P&L, holding period, STCG/LTCG status. Shared with Tax module
-- **🧾 Tax P&L (STCG/LTCG)** — FY 2025-26 tax computation. STCG 15%, LTCG 10% (above ₹1L). Record sales, see realized vs unrealized tax liability. Export ITR-ready data as CSV
+### Stock Detail Tab
+- **Click any stock** to open a dedicated analysis tab
+- **Interactive SVG price chart** — 1M/3M/6M/1Y with buy price + target overlays
+- **Day-wise P&L table** — From 30 Mar 2026, bar chart + cumulative P&L
+- **3-panel grid** — Your Position · Fundamentals · Day-wise P&L
+- **Fundamentals** — Market Cap, P/E, EPS, 52W H/L, Volume, Beta, Div Yield
+- **AI Analysis** — Sentiment, opportunities, risks, position comment
 
 ### AI Analysis (Optional)
-- **Dual AI** — Groq (Llama 3.3 70B, free) + Gemini (2.0 Flash, free tier)
-- **Primary + Fallback** — Auto-fallback if primary quota hits
-- **Per-stock Analysis** — Sentiment, opportunities, risks, position comment
-- **Provider toggle** — Switch between Groq/Gemini per stock
+- **Dual AI** — Groq (Llama 3.3 70B) + Gemini (2.0 Flash)
+- **Auto-fallback** — Primary fails → secondary takes over
+- **Per-stock toggle** — Switch provider per stock when both configured
 
-### UI & UX
-- **NVIDIA-style dark theme** — `#0a0a0a` background, `#76b900` green accent
-- **USD/INR live rate** — US P&L shown in both USD and INR equivalent
-- **Error Boundary** — Recovery UI instead of white screen crash
-- **Last-known price cache** — Prices persist on failed refresh
-- **Auto-updater** — Silent GitHub release updates
+---
+
+## 🧰 Tools (Sidebar)
+
+### v4.3 — High Value
+| Tool | Description |
+|---|---|
+| 👁 **Watchlist** | Track stocks with target entry/exit prices. Highlights near-entry (amber) and target-hit (green). Notes field. CSV export. |
+| 📋 **Buy Lots** | Record individual buy transactions. Weighted avg price per stock. Per-lot P&L. STCG/LTCG badge. Shared with Tax module. |
+| 🧾 **Tax P&L** | FY 2025-26 STCG/LTCG computation. Record sales, view realized vs unrealized liability. ITR-ready CSV export. |
+
+### v4.4 — Medium Value
+| Tool | Description |
+|---|---|
+| 📝 **Notes** | Per-stock notes/rationale. Card view of all annotated stocks. Edit in-place. |
+| 🔔 **Price Alerts** | Set above/below thresholds per stock. Browser notifications on trigger. Active + triggered log. |
+| 🏭 **Sectors** | Group holdings by sector. Interactive donut chart. Fetches sector from Yahoo Finance. Manual override. |
+| 📊 **Benchmark** | Compare Nifty 50 + S&P 500 performance over 1M/3M/6M/1Y. Interactive SVG line chart. Performance table. |
+| 📈 **History** | Auto-snapshots portfolio value daily on each price refresh. Line chart + daily table. Up to 365 days. |
 
 ---
 
@@ -50,9 +58,10 @@ A high-performance **Windows 11 desktop application** for tracking personal stoc
 | Desktop | Electron 41 |
 | Bundler | electron-builder (NSIS + portable) |
 | Data | Yahoo Finance v7/v8/v10 APIs |
-| AI | Groq (Llama 3.3 70B) · Gemini (2.0 Flash) |
+| AI | Groq (Llama 3.3 70B) · Gemini 2.0 Flash |
 | Export | SheetJS (XLSX) · native Blob (CSV) |
-| Charts | Custom SVG |
+| Notifications | Browser Notification API |
+| Charts | Custom SVG (no chart library) |
 | Updates | electron-updater via GitHub Releases |
 
 ---
@@ -60,8 +69,8 @@ A high-performance **Windows 11 desktop application** for tracking personal stoc
 ## 📦 Installation
 
 ### For Users
-1. Download `Stock Portfolio Monitor Setup 4.3.0.exe` from Releases
-2. On first launch — enter Groq/Gemini keys or skip for Yahoo-only mode
+1. Download `Stock Portfolio Monitor Setup 4.4.0.exe` from Releases
+2. On first launch — enter Groq/Gemini keys or skip (Yahoo Finance only)
 
 ### For Developers
 ```bash
@@ -79,10 +88,33 @@ build-win.bat   # Run as Administrator
 
 ---
 
+## 📁 File Structure
+
+```
+C:\code\
+├── package.json       # v4.4.0, dependencies, build config
+├── vite.config.js
+├── index.html         # CSP: Yahoo, Groq, Gemini only
+├── main.js            # Electron main + auto-updater
+├── preload.js         # contextBridge (window controls, update events)
+├── build-win.bat      # Build script (run as Administrator)
+├── README.md
+├── assets/icon.ico    # Portfolio P icon — 7 sizes (16–256px)
+└── src/
+    ├── index.js       # React entry
+    └── App.js         # ~2,900 lines — full single-file app
+                       # Modules: Watchlist, BuyLots, Tax, Notes,
+                       # Alerts, Sectors, Benchmark, History,
+                       # StockDetailView, Section, AI components,
+                       # ErrorBoundary, PortfolioTabs
+```
+
+---
+
 ## 🔒 Security
-- CSP restricts connections to Yahoo Finance, Groq, and Gemini only
-- API keys stored in `localStorage` — never sent elsewhere
-- No telemetry, no analytics
+- CSP allows only `*.yahoo.com`, `api.groq.com`, `generativelanguage.googleapis.com`
+- API keys in `localStorage` only — never sent elsewhere
+- No telemetry, no analytics, no external logging
 
 ---
 
@@ -90,46 +122,30 @@ build-win.bat   # Run as Administrator
 
 | | |
 |---|---|
-| Version | 4.3.0 |
+| Version | 4.4.0 |
 | Author | Arun Verma (arunmcops@gmail.com) |
 | Repository | github.com/arunniperk/stock-portfolio-desktop |
 | Platform | Windows 10/11 (64-bit) |
 
 ---
 
-## 📁 File Structure
-
-```
-C:\code\
-├── package.json       # v4.3.0, dependencies, build config
-├── vite.config.js
-├── index.html         # CSP meta tag
-├── main.js            # Electron main + auto-updater
-├── preload.js         # contextBridge
-├── build-win.bat      # Build script
-├── README.md
-├── assets/icon.ico    # Portfolio P icon (7 sizes)
-└── src/
-    ├── index.js       # React entry point
-    └── App.js         # Full app (~2,250 lines)
-                       # Includes: WatchlistModule, LotsModule,
-                       # TaxModule, StockDetailView, Section,
-                       # AISetupModal, AIAnalysis, ErrorBoundary
-```
-
----
-
-## 🔄 Push to GitHub as v4.3
+## 🔄 Push to GitHub as v4.4
 
 ```cmd
 cd C:\code
 git add .
-git commit -m "Portfolio Manager v4.3 - Watchlist, Buy Lots, Tax P&L"
+git commit -m "Portfolio Manager v4.4 - Notes, Alerts, Sectors, Benchmark, History"
 git push
-git tag v4.3.0
-git push origin v4.3.0
+git tag v4.4.0
+git push origin v4.4.0
 ```
 
-Then create a GitHub Release at:
-`github.com/arunniperk/stock-portfolio-desktop/releases`
-Upload installer from `dist\` and publish.
+Then create a GitHub Release → upload installer from `dist\` → Publish.
+Running v4.x instances will show the Update Ready banner automatically.
+
+---
+
+## 💡 Tax Notes (India — Equity)
+- **STCG** (Short Term Capital Gains) — Held < 12 months → 15% flat
+- **LTCG** (Long Term Capital Gains) — Held ≥ 12 months → 10% above ₹1L exemption
+- Tax estimates are indicative only — consult a CA for ITR filing

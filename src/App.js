@@ -1262,6 +1262,656 @@ function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T})
 }
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: NOTES PER STOCK ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Storage: pm_notes = { "SYMBOL": "note text" }
+// Also exports useNote() for StockDetailView inline note
+
+function useNotes() {
+  const [notes,setNotes]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_notes')||'{}');}catch{return {};}});
+  const saveNote=(sym,text)=>{setNotes(p=>{const n={...p};if(text.trim())n[sym]=text;else delete n[sym];localStorage.setItem('pm_notes',JSON.stringify(n));return n;});};
+  return{notes,saveNote};
+}
+
+function NotesModule({T,holdings}) {
+  const {notes,saveNote}=useNotes();
+  const [editSym,setEditSym]=useState(null);
+  const [editText,setEditText]=useState('');
+  const [filter,setFilter]=useState('');
+
+  const allSymbols=[...new Set([...Object.keys(notes),...(holdings||[]).map(h=>h.symbol)])].filter(s=>!filter||s.includes(filter.toUpperCase())||(notes[s]||'').toLowerCase().includes(filter.toLowerCase()));
+
+  const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Stock Notes</div>
+          <div style={{fontSize:13,color:T.text3}}>{Object.keys(notes).length} note{Object.keys(notes).length!==1?'s':''}</div>
+        </div>
+        <div style={{position:'relative'}}><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:T.text3,pointerEvents:'none'}}><Ic.Search/></span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter stocks…" style={{...INP,width:180,paddingLeft:30}}/></div>
+      </div>
+
+      {!allSymbols.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No notes yet. Click any stock detail tab to add notes.</div>}
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:12}}>
+        {allSymbols.map(sym=>{
+          const holding=(holdings||[]).find(h=>h.symbol===sym);
+          const note=notes[sym]||'';
+          const isEdit=editSym===sym;
+          return(
+            <div key={sym} style={{background:T.surface2,borderRadius:8,border:`1px solid ${note?T.border:T.border}`,padding:16,display:'flex',flexDirection:'column',gap:10}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <div>
+                  <div style={{fontWeight:700,color:T.accent,fontSize:13}}>{short(sym)}</div>
+                  {holding&&<div style={{fontSize:11,color:T.text3}}>{holding.name}</div>}
+                </div>
+                <div style={{display:'flex',gap:6}}>
+                  {!isEdit&&<button onClick={()=>{setEditSym(sym);setEditText(note);}} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'4px 8px',display:'flex',alignItems:'center',gap:4,fontSize:11,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.Pencil/> Edit</button>}
+                  {note&&!isEdit&&<button onClick={()=>saveNote(sym,'')} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'4px 8px',display:'flex',alignItems:'center',fontSize:11,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.danger;e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.Trash/></button>}
+                </div>
+              </div>
+              {isEdit?(
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  <textarea value={editText} onChange={e=>setEditText(e.target.value)} rows={4} style={{...INP,resize:'vertical',lineHeight:1.6}} placeholder="Investment rationale, risks, targets…" autoFocus/>
+                  <div style={{display:'flex',gap:8}}>
+                    <NvBtn onClick={()=>{saveNote(sym,editText);setEditSym(null);}} variant="primary" T={T}><Ic.Check/> Save</NvBtn>
+                    <NvBtn onClick={()=>setEditSym(null)} T={T}><Ic.X/> Cancel</NvBtn>
+                  </div>
+                </div>
+              ):(
+                <div style={{fontSize:12,color:note?T.text:T.text3,lineHeight:1.7,fontStyle:note?'normal':'italic',minHeight:40,whiteSpace:'pre-wrap'}}>{note||'No note. Click Edit to add.'}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: PRICE ALERTS ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Storage: pm_alerts = [{id,symbol,name,direction,price,currency,triggered,triggeredAt}]
+// Alerts are checked whenever prices refresh
+
+function AlertsModule({T,prices,holdings}) {
+  const [alerts,setAlerts]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_alerts')||'[]');}catch{return [];}});
+  const [form,setForm]=useState({symbol:'',name:'',direction:'above',price:'',currency:'INR'});
+  const [showAdd,setShowAdd]=useState(false);
+  const [srch,setSrch]=useState('');
+  const [results,setResults]=useState([]);
+  const [focused,setFocused]=useState(false);
+  const [busyS,setBusyS]=useState(false);
+  const timer=useRef(null);
+
+  useEffect(()=>{localStorage.setItem('pm_alerts',JSON.stringify(alerts));},[alerts]);
+
+  // Check alerts against current prices
+  useEffect(()=>{
+    if(!prices||!alerts.length)return;
+    let changed=false;
+    const updated=alerts.map(a=>{
+      if(a.triggered)return a;
+      const p=prices[a.symbol]?.current;
+      if(!p)return a;
+      const hit=(a.direction==='above'&&p>=a.price)||(a.direction==='below'&&p<=a.price);
+      if(hit){
+        changed=true;
+        // Browser notification
+        if(typeof Notification!=='undefined'&&Notification.permission==='granted'){
+          new Notification(`Price Alert: ${short(a.symbol)}`,{body:`${short(a.symbol)} is ${a.direction} ${a.currency==='USD'?'$':'₹'}${a.price} — currently ${a.currency==='USD'?'$':'₹'}${p.toFixed(2)}`,icon:''});
+        }
+        return{...a,triggered:true,triggeredAt:Date.now()};
+      }
+      return a;
+    });
+    if(changed){setAlerts(updated);localStorage.setItem('pm_alerts',JSON.stringify(updated));}
+  },[prices]);
+
+  // Request notification permission
+  useEffect(()=>{
+    if(typeof Notification!=='undefined'&&Notification.permission==='default'){
+      Notification.requestPermission();
+    }
+  },[]);
+
+  const doSearch=q=>{
+    setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
+    timer.current=setTimeout(async()=>{
+      setBusyS(true);
+      try{
+        for(const host of ['query1','query2']){
+          const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});
+          if(r.ok){const j=await r.json();const q2=(j?.quotes??[]).filter(x=>x.symbol&&x.quoteType!=='OPTION').slice(0,7);if(q2.length){setResults(q2);break;}}
+        }
+      }catch{}setBusyS(false);
+    },400);
+  };
+
+  const addAlert=()=>{
+    if(!form.symbol||!form.price)return;
+    setAlerts(p=>[{id:Date.now(),symbol:form.symbol,name:form.name||form.symbol,direction:form.direction,price:parseFloat(form.price),currency:form.currency,triggered:false,triggeredAt:null,createdAt:Date.now()},...p]);
+    setForm({symbol:'',name:'',direction:'above',price:'',currency:'INR'});setSrch('');setResults([]);setShowAdd(false);
+  };
+  const removeAlert=id=>setAlerts(p=>p.filter(a=>a.id!==id));
+  const resetAlert=id=>setAlerts(p=>p.map(a=>a.id===id?{...a,triggered:false,triggeredAt:null}:a));
+
+  const active=alerts.filter(a=>!a.triggered);
+  const triggered=alerts.filter(a=>a.triggered);
+  const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
+  const tdS={padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontSize:12};
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Price Alerts</div>
+          <div style={{fontSize:13,color:T.text3}}>{active.length} active · {triggered.length} triggered</div>
+        </div>
+        <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> New Alert</NvBtn>
+      </div>
+
+      {showAdd&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:18}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Create Price Alert</div>
+          <div style={{display:'grid',gridTemplateColumns:'2fr 0.8fr 0.8fr 0.6fr auto',gap:10,alignItems:'end'}}>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Stock</div>
+              <div style={{position:'relative'}}>
+                <input value={srch} onChange={e=>doSearch(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setTimeout(()=>setFocused(false),200)} placeholder="Search stock…" style={INP} autoFocus/>
+                {focused&&results.length>0&&(
+                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:9999,background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.3)',overflow:'hidden'}}>
+                    {results.map((r,i)=><div key={r.symbol} onMouseDown={()=>{setForm(p=>({...p,symbol:r.symbol,name:r.longname||r.shortname||r.symbol,currency:isUS(r.symbol)?'USD':'INR'}));setSrch(r.longname||r.shortname||r.symbol);setResults([]);}} style={{padding:'9px 14px',cursor:'pointer',display:'flex',justifyContent:'space-between',borderBottom:i<results.length-1?`1px solid ${T.border}`:'none',transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <span style={{fontWeight:700,color:T.accent,marginRight:8}}>{r.symbol}</span><span style={{fontSize:11,color:T.text3}}>{r.longname||r.shortname}</span>
+                    </div>)}
+                  </div>
+                )}
+              </div>
+              {form.symbol&&<div style={{fontSize:11,color:T.accent,marginTop:3}}>✓ {form.symbol}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Direction</div>
+              <select value={form.direction} onChange={e=>setForm(p=>({...p,direction:e.target.value}))} style={{...INP}}>
+                <option value="above">Above ▲</option>
+                <option value="below">Below ▼</option>
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Price ({form.currency==='USD'?'$':'₹'})</div>
+              <input type="number" value={form.price} onChange={e=>setForm(p=>({...p,price:e.target.value}))} placeholder="e.g. 2800" style={INP}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Mkt</div>
+              <select value={form.currency} onChange={e=>setForm(p=>({...p,currency:e.target.value}))} style={{...INP}}>
+                <option value="INR">🇮🇳 INR</option>
+                <option value="USD">🇺🇸 USD</option>
+              </select>
+            </div>
+            <div style={{display:'flex',gap:6}}>
+              <NvBtn onClick={addAlert} variant="primary" disabled={!form.symbol||!form.price} T={T}><Ic.Plus/> Add</NvBtn>
+              <NvBtn onClick={()=>{setShowAdd(false);setSrch('');setResults([]);}} T={T}><Ic.X/></NvBtn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!alerts.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No alerts set. Add a price alert to get notified when a stock crosses your target.</div>}
+
+      {active.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
+            <div style={{width:3,height:16,background:T.accent,borderRadius:2}}/>
+            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Active Alerts</span>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr style={{background:T.surface3}}>{['Stock','Direction','Alert Price','Current Price','Distance','Created',''].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700}}>{h}</th>)}</tr></thead>
+            <tbody>{active.map((a,i)=>{
+              const cp=prices[a.symbol]?.current;
+              const dist=cp?((a.direction==='above'?a.price-cp:cp-a.price)/cp*100):null;
+              const near=dist!=null&&dist<5&&dist>=0;
+              return(
+                <tr key={a.id} style={{background:near?(a.currency==='INR'?T.warnBg:T.warnBg):i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=near?T.warnBg:i%2===0?T.surface2:T.surface3}>
+                  <td style={{...tdS}}><div style={{fontWeight:700,color:T.accent}}>{short(a.symbol)}</div><div style={{fontSize:10,color:T.text3}}>{a.name}</div></td>
+                  <td style={{...tdS}}><span style={{padding:'2px 8px',borderRadius:12,fontSize:11,fontWeight:700,background:a.direction==='above'?T.successBg:T.dangerBg,color:a.direction==='above'?T.success:T.danger}}>{a.direction==='above'?'▲ Above':'▼ Below'}</span></td>
+                  <td style={{...tdS,fontWeight:700,color:T.text}}>{a.currency==='USD'?'$':'₹'}{a.price.toLocaleString()}</td>
+                  <td style={{...tdS,color:T.cyan}}>{cp?`${a.currency==='USD'?'$':'₹'}${cp.toFixed(2)}`:'—'}</td>
+                  <td style={{...tdS}}>{dist!=null?<span style={{fontWeight:700,color:near?T.warning:T.text3}}>{dist>=0?`${dist.toFixed(1)}% away`:'⚡ Within range'}</span>:'—'}</td>
+                  <td style={{...tdS,color:T.text3,fontSize:11}}>{new Date(a.createdAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</td>
+                  <td style={{...tdS}}><button onClick={()=>removeAlert(a.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:'3px 6px',borderRadius:4,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;}}><Ic.Trash/></button></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
+
+      {triggered.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.success}40`,overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
+            <div style={{width:3,height:16,background:T.success,borderRadius:2}}/>
+            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Triggered Alerts</span>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <tbody>{triggered.map((a,i)=>(
+              <tr key={a.id} style={{background:i%2===0?T.surface2:T.surface3}}>
+                <td style={{...tdS}}><div style={{fontWeight:700,color:T.accent}}>{short(a.symbol)}</div></td>
+                <td style={{...tdS,color:T.text3}}>{a.direction==='above'?'▲':'▼'} {a.currency==='USD'?'$':'₹'}{a.price}</td>
+                <td style={{...tdS}}><span style={{padding:'2px 8px',borderRadius:12,fontSize:10,fontWeight:700,background:T.successBg,color:T.success}}>✓ TRIGGERED</span></td>
+                <td style={{...tdS,color:T.text3,fontSize:11}}>{a.triggeredAt?new Date(a.triggeredAt).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+                <td style={{...tdS,display:'flex',gap:6}}>
+                  <NvBtn onClick={()=>resetAlert(a.id)} T={T}>Reset</NvBtn>
+                  <button onClick={()=>removeAlert(a.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:'3px 6px',borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=T.danger} onMouseLeave={e=>e.currentTarget.style.color=T.text3}><Ic.Trash/></button>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: SECTOR ALLOCATION ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fetches sector from Yahoo Finance v10 quoteSummary assetProfile
+// Storage: pm_sectors = { SYMBOL: { sector, industry } }
+
+function SectorModule({T,rows,prices}) {
+  const [sectorMap,setSectorMap]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_sectors')||'{}');}catch{return {};}});
+  const [loading,setLoading]=useState(false);
+  const [manualEdit,setManualEdit]=useState(null);
+  const [editVal,setEditVal]=useState('');
+
+  useEffect(()=>{localStorage.setItem('pm_sectors',JSON.stringify(sectorMap));},[sectorMap]);
+
+  const fetchSectors=async()=>{
+    setLoading(true);
+    const toFetch=rows.filter(r=>!sectorMap[r.symbol]);
+    await Promise.all(toFetch.map(async r=>{
+      try{
+        const res=await fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(r.symbol)}?modules=assetProfile`,{headers:{Accept:'application/json'}});
+        if(res.ok){const j=await res.json();const p=j?.quoteSummary?.result?.[0]?.assetProfile;if(p?.sector){setSectorMap(prev=>({...prev,[r.symbol]:{sector:p.sector,industry:p.industry||p.sector}}));}}
+      }catch{}
+    }));
+    setLoading(false);
+  };
+
+  // Group rows by sector
+  const grouped=useMemo(()=>{
+    const map={};
+    rows.forEach(r=>{
+      const sec=sectorMap[r.symbol]?.sector||'Uncategorised';
+      if(!map[sec])map[sec]={sector:sec,holdings:[],totalValue:0,totalInvested:0,totalGain:0};
+      const val=r.curValue??r.invested;
+      map[sec].holdings.push(r);
+      map[sec].totalValue+=val;
+      map[sec].totalInvested+=r.invested;
+      map[sec].totalGain+=(r.gain??0);
+    });
+    return Object.values(map).sort((a,b)=>b.totalValue-a.totalValue);
+  },[rows,sectorMap]);
+
+  const totalValue=rows.reduce((s,r)=>s+(r.curValue??r.invested),0)||1;
+
+  const SEC_COLORS=['#6366f1','#76b900','#00b4d8','#f59e0b','#ef4444','#a855f7','#06b6d4','#f97316','#10b981','#ec4899'];
+
+  const CX=110,CY=110,OUTER=100,INNER=50;
+  const segs=useMemo(()=>{
+    let cum=0;
+    return grouped.map((g,i)=>{
+      const frac=g.totalValue/totalValue;
+      const s=cum+0.005,e=cum+frac-0.005;cum+=frac;
+      const sa=(s*2*Math.PI)-Math.PI/2,ea=(e*2*Math.PI)-Math.PI/2;
+      const x1=CX+OUTER*Math.cos(sa),y1=CY+OUTER*Math.sin(sa),x2=CX+OUTER*Math.cos(ea),y2=CY+OUTER*Math.sin(ea);
+      const xi=CX+INNER*Math.cos(ea),yi=CY+INNER*Math.sin(ea),xi2=CX+INNER*Math.cos(sa),yi2=CY+INNER*Math.sin(sa);
+      return{...g,frac,color:SEC_COLORS[i%SEC_COLORS.length],path:`M${x1} ${y1} A${OUTER} ${OUTER} 0 ${frac>.5?1:0} 1 ${x2} ${y2} L${xi} ${yi} A${INNER} ${INNER} 0 ${frac>.5?1:0} 0 ${xi2} ${yi2}Z`};
+    });
+  },[grouped,totalValue]);
+
+  const [hover,setHover]=useState(null);
+  const INP={padding:'7px 10px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',fontFamily:'inherit'};
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Sector Allocation</div>
+          <div style={{fontSize:13,color:T.text3}}>{grouped.length} sectors · {rows.length} holdings</div>
+        </div>
+        <NvBtn onClick={fetchSectors} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Fetching sectors…':'Refresh Sectors'}</NvBtn>
+      </div>
+
+      {rows.length===0&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No holdings found. Add stocks to your portfolio first.</div>}
+
+      {rows.length>0&&(
+        <div style={{display:'grid',gridTemplateColumns:'240px 1fr',gap:20,alignItems:'start'}}>
+          {/* Donut */}
+          <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:16}}>
+            <svg width={220} height={220} style={{display:'block',margin:'0 auto'}}>
+              {segs.map((s,i)=>(
+                <path key={i} d={s.path} fill={s.color} opacity={hover===null||hover===i?1:.25} style={{cursor:'pointer',transition:'opacity .15s'}} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)}/>
+              ))}
+              <text x={CX} y={CY-8} textAnchor="middle" fontSize={11} fill={T.text3} fontFamily="inherit">{hover!==null?segs[hover]?.sector:'All'}</text>
+              <text x={CX} y={CY+12} textAnchor="middle" fontSize={16} fontWeight="700" fill={T.text} fontFamily="inherit">{hover!==null?`${(segs[hover]?.frac*100).toFixed(1)}%`:segs.length}</text>
+            </svg>
+          </div>
+          {/* Legend + detail */}
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {grouped.map((g,i)=>(
+              <div key={g.sector} style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:'12px 16px',opacity:hover===null||hover===i?1:.4,transition:'opacity .15s'}} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <div style={{width:10,height:10,borderRadius:2,background:SEC_COLORS[i%SEC_COLORS.length],flexShrink:0}}/>
+                    <span style={{fontWeight:700,color:T.text,fontSize:13}}>{g.sector}</span>
+                    <span style={{fontSize:11,color:T.text3,background:T.surface3,padding:'1px 7px',borderRadius:10}}>{g.holdings.length} stock{g.holdings.length!==1?'s':''}</span>
+                  </div>
+                  <div style={{display:'flex',gap:20}}>
+                    <div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3}}>Allocation</div><div style={{fontWeight:700,color:T.text}}>{(g.totalValue/totalValue*100).toFixed(1)}%</div></div>
+                    <div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3}}>Value</div><div style={{fontWeight:700,color:T.cyan}}>₹{g.totalValue.toLocaleString('en-IN',{maximumFractionDigits:0})}</div></div>
+                    <div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3}}>P&L</div><div style={{fontWeight:700,color:g.totalGain>=0?T.success:T.danger}}>{g.totalGain>=0?'+':'−'}₹{Math.abs(g.totalGain).toLocaleString('en-IN',{maximumFractionDigits:0})}</div></div>
+                  </div>
+                </div>
+                {/* Allocation bar */}
+                <div style={{height:4,background:T.surface4,borderRadius:2,marginBottom:8}}>
+                  <div style={{width:`${(g.totalValue/totalValue*100).toFixed(1)}%`,height:'100%',background:SEC_COLORS[i%SEC_COLORS.length],borderRadius:2}}/>
+                </div>
+                {/* Holdings chips */}
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {g.holdings.map(h=>(
+                    <div key={h.symbol} style={{display:'flex',alignItems:'center',gap:5,background:T.surface3,borderRadius:6,padding:'3px 10px'}}>
+                      <span style={{fontSize:11,fontWeight:600,color:T.text}}>{short(h.symbol)}</span>
+                      {!sectorMap[h.symbol]&&(
+                        manualEdit===h.symbol
+                          ?<div style={{display:'flex',gap:4,alignItems:'center'}}>
+                            <input value={editVal} onChange={e=>setEditVal(e.target.value)} placeholder="Sector" style={{...INP,width:100,padding:'2px 6px'}} autoFocus/>
+                            <button onClick={()=>{setSectorMap(p=>({...p,[h.symbol]:{sector:editVal,industry:editVal}}));setManualEdit(null);}} style={{background:'none',border:'none',cursor:'pointer',color:T.success,padding:2}}><Ic.Check/></button>
+                          </div>
+                          :<button onClick={()=>{setManualEdit(h.symbol);setEditVal('');}} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:1,fontSize:10}} title="Set sector"><Ic.Pencil/></button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{fontSize:11,color:T.text3}}>Sector data from Yahoo Finance. Click "Refresh Sectors" to fetch. Set manually for any missing stocks.</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: BENCHMARK COMPARISON ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function BenchmarkModule({T,rows,lots}) {
+  const [benchData,setBenchData]=useState({});
+  const [loading,setLoading]=useState(false);
+  const [range,setRange]=useState('3mo');
+  const [hover,setHover]=useState(null);
+  const svgRef=useRef();
+
+  const RANGES=[{v:'1mo',l:'1M'},{v:'3mo',l:'3M'},{v:'6mo',l:'6M'},{v:'1y',l:'1Y'}];
+  const BENCHES=[
+    {sym:'^NSEI',label:'Nifty 50',color:'#f59e0b'},
+    {sym:'^GSPC',label:'S&P 500',color:'#00b4d8'},
+  ];
+
+  const fetchBench=useCallback(async()=>{
+    setLoading(true);
+    const out={};
+    await Promise.all(BENCHES.map(async b=>{
+      try{
+        const r=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(b.sym)}?interval=1d&range=${range}`,{headers:{Accept:'application/json'}});
+        if(r.ok){const j=await r.json();const res=j?.chart?.result?.[0];const ts=res?.timestamp||[];const q=res?.indicators?.quote?.[0]||{};const closes=ts.map((t,i)=>({date:t*1000,close:q.close?.[i]})).filter(d=>d.close!=null);out[b.sym]=closes;}
+      }catch{}
+    }));
+    setBenchData(out);setLoading(false);
+  },[range]);
+
+  useEffect(()=>{fetchBench();},[fetchBench]);
+
+  // Calculate portfolio return series from rows (simple: use current holdings)
+  const portfolioSeries=useMemo(()=>{
+    // Use longest available benchmark series as date axis
+    const dates=Object.values(benchData)[0]?.map(d=>d.date)||[];
+    if(!dates.length||!rows.length)return[];
+    // For each date, estimate portfolio value using current weights * day close
+    // This is approximate — for exact we'd need historical prices per holding
+    // Return a normalized series (100 = start)
+    return dates.map((date,i)=>{
+      const pct=Object.values(benchData).map(s=>{const pt=s[i];const p0=s[0];return pt&&p0?(pt.close/p0.close-1)*100:null;}).filter(Boolean);
+      return{date,pct:pct.length?null:null}; // portfolio pct calculated separately
+    });
+  },[benchData,rows]);
+
+  // Normalize benchmark series to % return from start
+  const normalized=useMemo(()=>{
+    const out={};
+    BENCHES.forEach(b=>{
+      const s=benchData[b.sym];if(!s||!s.length)return;
+      const base=s[0].close;
+      out[b.sym]=s.map(d=>({date:d.date,pct:(d.close/base-1)*100}));
+    });
+    return out;
+  },[benchData]);
+
+  // SVG chart
+  const allSeries=Object.values(normalized);
+  const allPcts=allSeries.flatMap(s=>s.map(d=>d.pct)).filter(Boolean);
+  const minP=Math.min(...allPcts,-5),maxP=Math.max(...allPcts,5);
+  const range_=maxP-minP||10;
+  const dates=allSeries[0]?.map(d=>d.date)||[];
+  const VW=700,VH=200,PAD={t:16,r:16,b:32,l:52};
+  const W=VW-PAD.l-PAD.r,H=VH-PAD.t-PAD.b;
+  const xOf=i=>PAD.l+(i/(dates.length-1||1))*W;
+  const yOf=p=>PAD.t+H-((p-minP)/range_)*H;
+  const yZero=yOf(0);
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Benchmark Comparison</div>
+          <div style={{fontSize:13,color:T.text3}}>Index performance vs your portfolio period</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {RANGES.map(r=>(
+            <button key={r.v} onClick={()=>setRange(r.v)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${range===r.v?T.accent:T.border2}`,background:range===r.v?T.accentBg:'transparent',color:range===r.v?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:range===r.v?700:400,transition:'all .12s'}}>{r.l}</button>
+          ))}
+          <NvBtn onClick={fetchBench} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:'16px 12px'}}>
+        {loading?<div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center',color:T.text3}}>Loading benchmark data…</div>:
+        !allSeries.length?<div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center',color:T.text3}}>No data available</div>:(
+          <svg ref={svgRef} viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{width:'100%',height:'auto',display:'block'}} onMouseMove={e=>{if(!svgRef.current)return;const rect=svgRef.current.getBoundingClientRect();const sx=((e.clientX-rect.left)/rect.width)*VW;const i=Math.max(0,Math.min(dates.length-1,Math.round(((sx-PAD.l)/W)*(dates.length-1))));setHover(i);}} onMouseLeave={()=>setHover(null)}>
+            {/* Zero line */}
+            <line x1={PAD.l} y1={yZero} x2={PAD.l+W} y2={yZero} stroke={T.border} strokeWidth="1"/>
+            <text x={PAD.l-4} y={yZero+4} fontSize={8} fill={T.text3} fontFamily="inherit" textAnchor="end">0%</text>
+            {/* Grid */}
+            {[-10,-5,5,10,15,20].map(p=>(p>minP&&p<maxP)&&(
+              <g key={p}><line x1={PAD.l} y1={yOf(p)} x2={PAD.l+W} y2={yOf(p)} stroke={T.border} strokeWidth="0.5" strokeDasharray="3 3"/><text x={PAD.l-4} y={yOf(p)+4} fontSize={8} fill={T.text3} fontFamily="inherit" textAnchor="end">{p}%</text></g>
+            ))}
+            {/* Benchmark lines */}
+            {BENCHES.map(b=>{
+              const s=normalized[b.sym];if(!s)return null;
+              const path=s.map((d,i)=>`${i===0?'M':'L'}${xOf(i).toFixed(1)},${yOf(d.pct).toFixed(1)}`).join(' ');
+              return<path key={b.sym} d={path} fill="none" stroke={b.color} strokeWidth="2"/>;
+            })}
+            {/* X axis dates */}
+            {dates.filter((_,i)=>i%Math.max(1,Math.floor(dates.length/6))===0).map((d,i)=>{
+              const idx=dates.indexOf(d);
+              return<text key={i} x={xOf(idx)} y={PAD.t+H+14} fontSize={8} fill={T.text3} fontFamily="inherit" textAnchor="middle">{new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</text>;
+            })}
+            {/* Hover */}
+            {hover!==null&&dates[hover]&&(
+              <g>
+                <line x1={xOf(hover)} y1={PAD.t} x2={xOf(hover)} y2={PAD.t+H} stroke={T.border2} strokeWidth="0.8"/>
+                <rect x={Math.min(xOf(hover)+8,VW-130)} y={PAD.t+4} width={120} height={BENCHES.length*18+20} rx={4} fill={T.surface2} stroke={T.border2} strokeWidth="0.8"/>
+                <text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+16} fontSize={8} fill={T.text3} fontFamily="inherit">{new Date(dates[hover]).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</text>
+                {BENCHES.map((b,i)=>{const s=normalized[b.sym];const pt=s?.[hover];return pt?<text key={b.sym} x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+i*18} fontSize={10} fill={b.color} fontFamily="inherit" fontWeight="700">{b.label}: {pt.pct>=0?'+':''}{pt.pct.toFixed(2)}%</text>:null;})}
+              </g>
+            )}
+          </svg>
+        )}
+        {/* Legend */}
+        <div style={{display:'flex',gap:20,justifyContent:'center',marginTop:8}}>
+          {BENCHES.map(b=>{const s=normalized[b.sym];const last=s?.[s.length-1]?.pct;return(
+            <div key={b.sym} style={{display:'flex',alignItems:'center',gap:6}}>
+              <div style={{width:20,height:2,background:b.color,borderRadius:1}}/>
+              <span style={{fontSize:12,color:T.text2}}>{b.label}</span>
+              {last!=null&&<span style={{fontSize:12,fontWeight:700,color:last>=0?T.success:T.danger}}>{last>=0?'+':''}{last.toFixed(2)}%</span>}
+            </div>
+          );})}
+        </div>
+      </div>
+
+      {/* Performance table */}
+      {allSeries.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`}}>
+            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Performance Summary</span>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+            <thead><tr style={{background:T.surface3}}>{['Index','Start','Current','Return','High','Low'].map(h=><th key={h} style={{padding:'10px 14px',textAlign:'left',color:T.text3,fontWeight:700,fontSize:11,borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
+            <tbody>{BENCHES.map((b,i)=>{
+              const s=normalized[b.sym];const raw=benchData[b.sym];if(!s||!raw)return null;
+              const ret=s[s.length-1]?.pct??0;const hi=Math.max(...s.map(d=>d.pct));const lo=Math.min(...s.map(d=>d.pct));
+              return(
+                <tr key={b.sym} style={{background:i%2===0?T.surface2:T.surface3}}>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`}}><div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:2,background:b.color}}/><span style={{fontWeight:700,color:T.text}}>{b.label}</span></div></td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text2}}>{raw[0]?.close?.toFixed(2)}</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.cyan,fontWeight:700}}>{raw[raw.length-1]?.close?.toFixed(2)}</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontWeight:700,color:ret>=0?T.success:T.danger}}>{ret>=0?'+':''}{ret.toFixed(2)}%</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.success}}>+{hi.toFixed(2)}%</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.danger}}>{lo.toFixed(2)}%</td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: HISTORICAL PORTFOLIO VALUE ────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Auto-snapshots on every price refresh. Storage: pm_portfolio_history
+
+function HistoryModule({T,rows}) {
+  const [history,setHistory]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_portfolio_history')||'[]');}catch{return [];}});
+  const svgRef=useRef();
+  const [hover,setHover]=useState(null);
+
+  // Called externally on each price refresh to save snapshot
+  useEffect(()=>{
+    if(!rows.length)return;
+    const inrVal=rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+(r.curValue??r.invested),0);
+    const usdVal=rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+(r.curValue??r.invested),0);
+    const today=new Date().toISOString().slice(0,10);
+    setHistory(prev=>{
+      const existing=prev.find(p=>p.date===today);
+      let updated;
+      if(existing){updated=prev.map(p=>p.date===today?{...p,inrVal,usdVal}:p);}
+      else{updated=[...prev,{date:today,inrVal,usdVal}].slice(-365);}
+      localStorage.setItem('pm_portfolio_history',JSON.stringify(updated));
+      return updated;
+    });
+  },[rows]);
+
+  const data=useMemo(()=>history.filter(h=>h.inrVal>0).sort((a,b)=>a.date.localeCompare(b.date)),[history]);
+
+  const VW=700,VH=200,PAD={t:16,r:16,b:32,l:80};
+  const W=VW-PAD.l-PAD.r,H=VH-PAD.t-PAD.b;
+  const vals=data.map(d=>d.inrVal);
+  const minV=Math.min(...vals)*0.99,maxV=Math.max(...vals)*1.01,rangeV=(maxV-minV)||1;
+  const xOf=i=>PAD.l+(i/(data.length-1||1))*W;
+  const yOf=v=>PAD.t+H-((v-minV)/rangeV)*H;
+
+  if(!data.length)return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{fontSize:20,fontWeight:700,color:T.text}}>Portfolio History</div>
+      <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No history yet. Snapshots are saved automatically each time prices refresh. Come back tomorrow!</div>
+    </div>
+  );
+
+  const linePath=data.map((d,i)=>`${i===0?'M':'L'}${xOf(i).toFixed(1)},${yOf(d.inrVal).toFixed(1)}`).join(' ');
+  const areaPath=linePath+` L${xOf(data.length-1).toFixed(1)},${PAD.t+H} L${PAD.l},${PAD.t+H} Z`;
+  const isUp=vals[vals.length-1]>=vals[0];
+  const lc=isUp?T.success:T.danger;
+  const gain=vals[vals.length-1]-vals[0];
+  const gainPct=(gain/vals[0])*100;
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Portfolio History</div>
+          <div style={{fontSize:13,color:T.text3}}>{data.length} daily snapshots</div>
+        </div>
+        <div style={{display:'flex',gap:16}}>
+          <div style={{textAlign:'right'}}><div style={{fontSize:11,color:T.text3}}>Current Value</div><div style={{fontSize:18,fontWeight:700,color:T.text}}>₹{vals[vals.length-1].toLocaleString('en-IN',{maximumFractionDigits:0})}</div></div>
+          <div style={{textAlign:'right'}}><div style={{fontSize:11,color:T.text3}}>Since Start</div><div style={{fontSize:18,fontWeight:700,color:lc}}>{gain>=0?'+':'−'}₹{Math.abs(gain).toLocaleString('en-IN',{maximumFractionDigits:0})} ({gainPct>=0?'+':''}{gainPct.toFixed(2)}%)</div></div>
+        </div>
+      </div>
+
+      <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:'16px 12px'}}>
+        <svg ref={svgRef} viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{width:'100%',height:'auto',display:'block',cursor:'crosshair'}} onMouseMove={e=>{if(!svgRef.current)return;const rect=svgRef.current.getBoundingClientRect();const sx=((e.clientX-rect.left)/rect.width)*VW;const i=Math.max(0,Math.min(data.length-1,Math.round(((sx-PAD.l)/W)*(data.length-1))));setHover(i);}} onMouseLeave={()=>setHover(null)}>
+          <defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={lc} stopOpacity="0.2"/><stop offset="100%" stopColor={lc} stopOpacity="0"/></linearGradient></defs>
+          {[0.25,0.5,0.75,1].map(f=>{const v=minV+rangeV*f;return(<g key={f}><line x1={PAD.l} y1={yOf(v)} x2={PAD.l+W} y2={yOf(v)} stroke={T.border} strokeWidth="0.5"/><text x={PAD.l-4} y={yOf(v)+4} fontSize={8} fill={T.text3} fontFamily="inherit" textAnchor="end">₹{(v/1e5).toFixed(1)}L</text></g>);})}
+          <path d={areaPath} fill="url(#hg)"/>
+          <path d={linePath} fill="none" stroke={lc} strokeWidth="2"/>
+          {data.filter((_,i)=>i%Math.max(1,Math.floor(data.length/7))===0).map((d,i)=>{const idx=data.indexOf(d);return<text key={i} x={xOf(idx)} y={PAD.t+H+14} fontSize={8} fill={T.text3} fontFamily="inherit" textAnchor="middle">{new Date(d.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</text>;})}
+          {hover!==null&&data[hover]&&(
+            <g>
+              <line x1={xOf(hover)} y1={PAD.t} x2={xOf(hover)} y2={PAD.t+H} stroke={T.border2} strokeWidth="0.8"/>
+              <circle cx={xOf(hover)} cy={yOf(data[hover].inrVal)} r={4} fill={lc} stroke={T.surface} strokeWidth="2"/>
+              <rect x={Math.min(xOf(hover)+8,VW-140)} y={PAD.t+4} width={130} height={50} rx={4} fill={T.surface2} stroke={T.border2} strokeWidth="0.8"/>
+              <text x={Math.min(xOf(hover)+14,VW-134)} y={PAD.t+18} fontSize={9} fill={T.text3} fontFamily="inherit">{data[hover].date}</text>
+              <text x={Math.min(xOf(hover)+14,VW-134)} y={PAD.t+34} fontSize={12} fill={T.text} fontFamily="inherit" fontWeight="700">₹{data[hover].inrVal.toLocaleString('en-IN',{maximumFractionDigits:0})}</text>
+              {data[hover].usdVal>0&&<text x={Math.min(xOf(hover)+14,VW-134)} y={PAD.t+47} fontSize={9} fill={T.text3} fontFamily="inherit">+ ${data[hover].usdVal.toLocaleString('en-US',{maximumFractionDigits:0})} US</text>}
+            </g>
+          )}
+        </svg>
+      </div>
+
+      {/* Data table */}
+      <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+        <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,fontWeight:700,color:T.text}}>Daily Snapshots</span></div>
+        <div style={{overflowX:'auto',maxHeight:300,overflowY:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+            <thead style={{position:'sticky',top:0,zIndex:2}}><tr style={{background:T.surface3}}>{['Date','IN Portfolio (₹)','US Portfolio ($)','Day Change'].map(h=><th key={h} style={{padding:'9px 14px',textAlign:'left',color:T.text3,fontWeight:700,fontSize:11,borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
+            <tbody>{[...data].reverse().map((d,i)=>{
+              const prev=data[data.length-2-i];const dayChg=prev?d.inrVal-prev.inrVal:null;
+              return(
+                <tr key={d.date} style={{background:i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                  <td style={{padding:'9px 14px',borderBottom:`1px solid ${T.border}`,color:T.text,fontWeight:600}}>{new Date(d.date).toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</td>
+                  <td style={{padding:'9px 14px',borderBottom:`1px solid ${T.border}`,fontWeight:700,color:T.cyan}}>₹{d.inrVal.toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
+                  <td style={{padding:'9px 14px',borderBottom:`1px solid ${T.border}`,color:T.text2}}>{d.usdVal>0?`$${d.usdVal.toLocaleString('en-US',{maximumFractionDigits:0})}`:'—'}</td>
+                  <td style={{padding:'9px 14px',borderBottom:`1px solid ${T.border}`}}>{dayChg!=null?<span style={{fontWeight:700,color:dayChg>=0?T.success:T.danger}}>{dayChg>=0?'+':'−'}₹{Math.abs(dayChg).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>:'—'}</td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── MODULE: WATCHLIST ─────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2100,9 +2750,14 @@ Respond ONLY as a JSON object with these keys:
     {id:'US', label:'US Equity',     icon:<Ic.US/>,    flag:'🇺🇸', color:T.usColor},
   ];
   const MOD_NAV=[
-    {id:'watchlist',label:'Watchlist',icon:'👁',color:'#a855f7'},
-    {id:'lots',     label:'Buy Lots', icon:'📋',color:'#06b6d4'},
-    {id:'tax',      label:'Tax P&L',  icon:'🧾',color:'#f59e0b'},
+    {id:'watchlist', label:'Watchlist',  icon:'👁', color:'#a855f7'},
+    {id:'lots',      label:'Buy Lots',  icon:'📋', color:'#06b6d4'},
+    {id:'tax',       label:'Tax P&L',  icon:'🧾', color:'#f59e0b'},
+    {id:'notes',     label:'Notes',    icon:'📝', color:'#10b981'},
+    {id:'alerts',    label:'Alerts',   icon:'🔔', color:'#ef4444'},
+    {id:'sectors',   label:'Sectors',  icon:'🏭', color:'#6366f1'},
+    {id:'benchmark', label:'Benchmark',icon:'📊', color:'#00b4d8'},
+    {id:'history',   label:'History',  icon:'📈', color:'#f97316'},
   ];
 
   return(
@@ -2127,7 +2782,7 @@ Respond ONLY as a JSON object with these keys:
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.3</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.4</div>
           </div>
         </div>
 
@@ -2221,6 +2876,11 @@ Respond ONLY as a JSON object with these keys:
           {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr}/>}
           {activeModule==='lots'&&<LotsModule T={T} prices={prices}/>}
           {activeModule==='tax'&&<TaxModule T={T} prices={prices}/>}
+          {activeModule==='notes'&&<NotesModule T={T} holdings={holdings}/>}
+          {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={holdings}/>}
+          {activeModule==='sectors'&&<SectorModule T={T} rows={rows} prices={prices}/>}
+          {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} lots={[]}/>}
+          {activeModule==='history'&&<HistoryModule T={T} rows={rows}/>}
           {!activeModule&&activeStock?(
             <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
           ):(!activeModule&&(
