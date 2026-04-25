@@ -1261,6 +1261,561 @@ function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T})
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: WATCHLIST ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+function WatchlistModule({T,usdInr}) {
+  const [items,setItems]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_watchlist')||'[]');}catch{return [];}});
+  const [wPrices,setWPrices]=useState({});
+  const [wLoading,setWLoading]=useState(false);
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({symbol:'',name:'',targetEntry:'',targetExit:'',notes:''});
+  const [srch,setSrch]=useState('');
+  const [results,setResults]=useState([]);
+  const [focused,setFocused]=useState(false);
+  const [busyS,setBusyS]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const timer=useRef(null);
+
+  useEffect(()=>{localStorage.setItem('pm_watchlist',JSON.stringify(items));},[items]);
+
+  const fetchWPrices=useCallback(async()=>{
+    if(!items.length)return;
+    setWLoading(true);
+    const out={};
+    await Promise.all(items.map(async item=>{
+      try{
+        const r=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(item.symbol)}?interval=1d&range=1d`,{headers:{Accept:'application/json'}});
+        if(!r.ok)throw new Error();
+        const j=await r.json();
+        const meta=j?.chart?.result?.[0]?.meta;
+        if(meta?.regularMarketPrice) out[item.symbol]={cur:meta.regularMarketPrice,prev:meta.chartPreviousClose??meta.regularMarketPrice,currency:meta.currency??(isUS(item.symbol)?'USD':'INR')};
+      }catch{}
+    }));
+    setWPrices(out);setWLoading(false);
+  },[items]);
+
+  useEffect(()=>{fetchWPrices();},[fetchWPrices]);
+
+  const doSearch=q=>{
+    setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
+    timer.current=setTimeout(async()=>{
+      setBusyS(true);
+      try{
+        for(const host of ['query1','query2']){
+          const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});
+          if(r.ok){const j=await r.json();const q2=(j?.quotes??[]).filter(x=>x.symbol&&x.quoteType!=='OPTION').slice(0,7);if(q2.length){setResults(q2);break;}}
+        }
+      }catch{}setBusyS(false);
+    },400);
+  };
+
+  const addItem=()=>{
+    const sym=form.symbol.trim().toUpperCase();if(!sym)return;
+    if(items.find(i=>i.symbol===sym)){alert('Already in watchlist');return;}
+    setItems(p=>[{id:Date.now(),symbol:sym,name:form.name||sym,targetEntry:parseFloat(form.targetEntry)||null,targetExit:parseFloat(form.targetExit)||null,notes:form.notes,addedDate:Date.now()},...p]);
+    setForm({symbol:'',name:'',targetEntry:'',targetExit:'',notes:''});setSrch('');setResults([]);setShowAdd(false);
+  };
+
+  const removeItem=id=>setItems(p=>p.filter(i=>i.id!==id));
+  const saveEdit=item=>setItems(p=>p.map(i=>i.id===item.id?item:i));
+
+  const csvExport=()=>{
+    const h=['Symbol','Name','Added','Target Entry','Target Exit','Current Price','Chg%','From Entry%','Notes'];
+    const body=items.map(i=>{const p=wPrices[i.symbol];const cur=p?.cur;const chg=p?((p.cur-p.prev)/p.prev)*100:null;const fromEntry=cur&&i.targetEntry?((cur-i.targetEntry)/i.targetEntry)*100:null;return[i.symbol,i.name,new Date(i.addedDate).toLocaleDateString('en-IN'),i.targetEntry??'',i.targetExit??'',cur?.toFixed(2)??'',chg?.toFixed(2)??'',fromEntry?.toFixed(2)??'',i.notes??''];});
+    const csv=[h,...body].map(r=>r.join(',')).join('\n');
+    const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`watchlist_${new Date().toISOString().slice(0,10)}.csv`});a.click();
+  };
+
+  const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
+  const tdS={padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontSize:12,whiteSpace:'nowrap'};
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Watchlist</div>
+          <div style={{fontSize:13,color:T.text3}}>{items.length} stock{items.length!==1?'s':''} tracked</div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <NvBtn onClick={csvExport} T={T} disabled={!items.length}><Ic.Download/> Export</NvBtn>
+          <NvBtn onClick={fetchWPrices} disabled={wLoading} T={T}><Ic.Refresh s={wLoading}/> Refresh</NvBtn>
+          <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Stock</NvBtn>
+        </div>
+      </div>
+
+      {/* Add form */}
+      {showAdd&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:18}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Add to Watchlist</div>
+          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:10,marginBottom:12}}>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Search Stock</div>
+              <div style={{position:'relative'}}>
+                <input value={srch} onChange={e=>doSearch(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setTimeout(()=>setFocused(false),200)} placeholder="e.g. INFY, AAPL…" style={INP} autoFocus/>
+                {busyS&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',color:T.text3,fontSize:11}}>…</span>}
+                {focused&&results.length>0&&(
+                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:9999,background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.3)',overflow:'hidden'}}>
+                    {results.map((r,i)=>(
+                      <div key={r.symbol} onMouseDown={()=>{setForm(p=>({...p,symbol:r.symbol,name:r.longname||r.shortname||r.symbol}));setSrch(r.longname||r.shortname||r.symbol);setResults([]);}} style={{padding:'9px 14px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:i<results.length-1?`1px solid ${T.border}`:'none',transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <div><span style={{fontWeight:700,color:T.accent,marginRight:8}}>{r.symbol}</span><span style={{fontSize:11,color:T.text3}}>{r.longname||r.shortname}</span></div>
+                        {r.exchDisp&&<span style={{fontSize:10,color:T.text3}}>{r.exchDisp}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {form.symbol&&<div style={{fontSize:11,color:T.accent,marginTop:4}}>✓ {form.symbol} — {form.name}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Target Entry</div>
+              <input type="number" value={form.targetEntry} onChange={e=>setForm(p=>({...p,targetEntry:e.target.value}))} placeholder="Buy at…" style={INP}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Target Exit</div>
+              <input type="number" value={form.targetExit} onChange={e=>setForm(p=>({...p,targetExit:e.target.value}))} placeholder="Sell at…" style={INP}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Notes</div>
+              <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Rationale…" style={INP}/>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <NvBtn onClick={addItem} variant="primary" disabled={!form.symbol} T={T}><Ic.Plus/> Add</NvBtn>
+            <NvBtn onClick={()=>{setShowAdd(false);setSrch('');setResults([]);setForm({symbol:'',name:'',targetEntry:'',targetExit:'',notes:''});}} T={T}><Ic.X/></NvBtn>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      {!items.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No stocks in watchlist. Click Add Stock to start tracking.</div>}
+      {items.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr style={{background:T.surface3}}>
+                {['Symbol','Added','Current','Day %','Target Entry','Vs Entry','Target Exit','Vs Exit','Notes',''].map(h=>(
+                  <th key={h} style={{...tdS,color:T.text3,fontWeight:700,fontSize:11,textAlign:h===''?'center':'left'}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {items.map((item,i)=>{
+                  const p=wPrices[item.symbol];
+                  const cur=p?.cur??null;
+                  const currency=p?.currency??(isUS(item.symbol)?'USD':'INR');
+                  const dayChg=p?((p.cur-p.prev)/p.prev)*100:null;
+                  const vsEntry=cur&&item.targetEntry?((cur-item.targetEntry)/item.targetEntry)*100:null;
+                  const vsExit=cur&&item.targetExit?((cur-item.targetExit)/item.targetExit)*100:null;
+                  const nearEntry=vsEntry!=null&&Math.abs(vsEntry)<5;
+                  const hitExit=vsExit!=null&&vsExit>=0;
+                  const isEdit=editId===item.id;
+                  return(
+                    <tr key={item.id} style={{background:hitExit?T.successBg:nearEntry?T.warnBg:i%2===0?T.surface2:T.surface3}}
+                      onMouseEnter={e=>e.currentTarget.style.background=T.surface4}
+                      onMouseLeave={e=>e.currentTarget.style.background=hitExit?T.successBg:nearEntry?T.warnBg:i%2===0?T.surface2:T.surface3}>
+                      <td style={{...tdS}}>
+                        <div style={{fontWeight:700,color:T.accent}}>{short(item.symbol)}</div>
+                        <div style={{fontSize:10,color:T.text3,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{item.name}</div>
+                        {hitExit&&<span style={{fontSize:9,background:T.success,color:'#000',padding:'1px 5px',borderRadius:3,fontWeight:700}}>TARGET HIT</span>}
+                        {nearEntry&&!hitExit&&<span style={{fontSize:9,background:T.warning,color:'#000',padding:'1px 5px',borderRadius:3,fontWeight:700}}>NEAR ENTRY</span>}
+                      </td>
+                      <td style={{...tdS,color:T.text3,fontSize:11}}>{new Date(item.addedDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'})}</td>
+                      <td style={{...tdS,fontWeight:700,color:T.cyan}}>
+                        {cur!=null?fmt(cur,currency):<span style={{color:T.text3,animation:'pulse 2s infinite'}}>Live…</span>}
+                        {cur!=null&&currency==='USD'&&usdInr&&<div style={{fontSize:9,color:T.text3}}>≈ ₹{(cur*usdInr).toLocaleString('en-IN',{maximumFractionDigits:0})}</div>}
+                      </td>
+                      <td style={{...tdS}}>
+                        {dayChg!=null?<span style={{fontWeight:700,color:dayChg>=0?T.success:T.danger}}>{dayChg>=0?'+':''}{dayChg.toFixed(2)}%</span>:<span style={{color:T.text3}}>—</span>}
+                      </td>
+                      <td style={{...tdS,color:T.text2}}>{item.targetEntry?fmt(item.targetEntry,currency):'—'}</td>
+                      <td style={{...tdS}}>
+                        {vsEntry!=null?<span style={{fontWeight:700,color:vsEntry<=0?T.success:T.warning}}>{vsEntry>=0?'+':''}{vsEntry.toFixed(1)}%</span>:<span style={{color:T.text3}}>—</span>}
+                      </td>
+                      <td style={{...tdS,color:T.text2}}>{item.targetExit?fmt(item.targetExit,currency):'—'}</td>
+                      <td style={{...tdS}}>
+                        {vsExit!=null?<span style={{fontWeight:700,color:vsExit>=0?T.success:T.danger}}>{vsExit>=0?'+':''}{vsExit.toFixed(1)}%</span>:<span style={{color:T.text3}}>—</span>}
+                      </td>
+                      <td style={{...tdS,color:T.text3,maxWidth:140,overflow:'hidden',textOverflow:'ellipsis'}}>{item.notes||'—'}</td>
+                      <td style={{...tdS,textAlign:'center'}}>
+                        <button onClick={()=>removeItem(item.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:'3px 6px',borderRadius:4,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;e.currentTarget.style.background=T.dangerBg;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;e.currentTarget.style.background='none';}} title="Remove"><Ic.Trash/></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: BUY LOTS TRACKER ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+function LotsModule({T,prices}) {
+  const [lots,setLots]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_lots')||'[]');}catch{return [];}});
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({symbol:'',name:'',qty:'',buyPrice:'',buyDate:new Date().toISOString().slice(0,10),currency:'INR',notes:''});
+  const [srch,setSrch]=useState('');
+  const [results,setResults]=useState([]);
+  const [focused,setFocused]=useState(false);
+  const [busyS,setBusyS]=useState(false);
+  const [filter,setFilter]=useState('');
+  const timer=useRef(null);
+
+  useEffect(()=>{localStorage.setItem('pm_lots',JSON.stringify(lots));},[lots]);
+
+  const doSearch=q=>{
+    setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
+    timer.current=setTimeout(async()=>{
+      setBusyS(true);
+      try{
+        for(const host of ['query1','query2']){
+          const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});
+          if(r.ok){const j=await r.json();const q2=(j?.quotes??[]).filter(x=>x.symbol&&x.quoteType!=='OPTION').slice(0,7);if(q2.length){setResults(q2);break;}}
+        }
+      }catch{}setBusyS(false);
+    },400);
+  };
+
+  const addLot=()=>{
+    const sym=form.symbol.trim().toUpperCase();
+    if(!sym||!form.qty||!form.buyPrice||!form.buyDate)return;
+    setLots(p=>[{id:Date.now(),symbol:sym,name:form.name||sym,qty:parseFloat(form.qty),buyPrice:parseFloat(form.buyPrice),buyDate:form.buyDate,currency:form.currency,notes:form.notes},...p]);
+    setForm(f=>({...f,symbol:'',name:'',qty:'',buyPrice:'',notes:''}));setSrch('');setResults([]);setShowAdd(false);
+  };
+  const removeLot=id=>setLots(p=>p.filter(l=>l.id!==id));
+
+  // Group lots by symbol, compute weighted avg
+  const grouped=useMemo(()=>{
+    const map={};
+    lots.filter(l=>!filter||l.symbol.includes(filter.toUpperCase())||l.name.toLowerCase().includes(filter.toLowerCase())).forEach(l=>{
+      if(!map[l.symbol])map[l.symbol]={symbol:l.symbol,name:l.name,currency:l.currency,lots:[],totalQty:0,totalInvested:0};
+      const g=map[l.symbol];
+      g.lots.push(l);g.totalQty+=l.qty;g.totalInvested+=l.qty*l.buyPrice;
+    });
+    return Object.values(map).map(g=>({...g,avgBuy:g.totalInvested/g.totalQty})).sort((a,b)=>a.symbol.localeCompare(b.symbol));
+  },[lots,filter]);
+
+  const curPrice=sym=>{const p=prices[sym];return p?.current??null;};
+
+  const csvExport=()=>{
+    const h=['Symbol','Name','Lot Date','Qty','Buy Price','Invested','Current Price','Current Value','P&L','P&L%','Holding Days','Notes'];
+    const body=lots.map(l=>{const cp=curPrice(l.symbol);const invested=l.qty*l.buyPrice;const curVal=cp?cp*l.qty:null;const pnl=curVal?curVal-invested:null;const pnlPct=pnl&&invested?pnl/invested*100:null;const days=Math.floor((Date.now()-new Date(l.buyDate))/86400000);return[l.symbol,l.name,l.buyDate,l.qty,l.buyPrice,invested.toFixed(2),cp?.toFixed(2)??'',curVal?.toFixed(2)??'',pnl?.toFixed(2)??'',pnlPct?.toFixed(2)??'',days,l.notes??''];});
+    const csv=[h,...body].map(r=>r.join(',')).join('\n');
+    const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`lots_${new Date().toISOString().slice(0,10)}.csv`});a.click();
+  };
+
+  const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
+  const tdS={padding:'9px 12px',borderBottom:`1px solid ${T.border}`,fontSize:12,whiteSpace:'nowrap'};
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Buy Lots Tracker</div>
+          <div style={{fontSize:13,color:T.text3}}>{lots.length} lot{lots.length!==1?'s':''} across {grouped.length} stock{grouped.length!==1?'s':''}</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <div style={{position:'relative'}}><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:T.text3,pointerEvents:'none'}}><Ic.Search/></span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter…" style={{...INP,width:140,paddingLeft:30}}/></div>
+          <NvBtn onClick={csvExport} T={T} disabled={!lots.length}><Ic.Download/> Export</NvBtn>
+          <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Lot</NvBtn>
+        </div>
+      </div>
+
+      {/* Add form */}
+      {showAdd&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:18}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Record Buy Transaction</div>
+          <div style={{display:'grid',gridTemplateColumns:'2fr 0.7fr 0.8fr 0.8fr 0.6fr auto',gap:10,alignItems:'end'}}>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Stock</div>
+              <div style={{position:'relative'}}>
+                <input value={srch} onChange={e=>doSearch(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setTimeout(()=>setFocused(false),200)} placeholder="Search stock…" style={INP} autoFocus/>
+                {focused&&results.length>0&&(
+                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:9999,background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.3)',overflow:'hidden'}}>
+                    {results.map((r,i)=>(
+                      <div key={r.symbol} onMouseDown={()=>{setForm(p=>({...p,symbol:r.symbol,name:r.longname||r.shortname||r.symbol,currency:isUS(r.symbol)?'USD':'INR'}));setSrch(r.longname||r.shortname||r.symbol);setResults([]);}} style={{padding:'9px 14px',cursor:'pointer',display:'flex',justifyContent:'space-between',borderBottom:i<results.length-1?`1px solid ${T.border}`:'none',transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <div><span style={{fontWeight:700,color:T.accent,marginRight:8}}>{r.symbol}</span><span style={{fontSize:11,color:T.text3}}>{r.longname||r.shortname}</span></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {form.symbol&&<div style={{fontSize:11,color:T.accent,marginTop:3}}>✓ {form.symbol}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Qty</div>
+              <input type="number" value={form.qty} onChange={e=>setForm(p=>({...p,qty:e.target.value}))} placeholder="10" style={INP}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Buy Price</div>
+              <input type="number" value={form.buyPrice} onChange={e=>setForm(p=>({...p,buyPrice:e.target.value}))} placeholder="2800" style={INP}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Buy Date</div>
+              <input type="date" value={form.buyDate} onChange={e=>setForm(p=>({...p,buyDate:e.target.value}))} style={INP}/>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Notes</div>
+              <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Optional" style={INP}/>
+            </div>
+            <div style={{display:'flex',gap:6}}>
+              <NvBtn onClick={addLot} variant="primary" disabled={!form.symbol||!form.qty||!form.buyPrice} T={T}><Ic.Plus/> Add</NvBtn>
+              <NvBtn onClick={()=>{setShowAdd(false);setSrch('');setResults([]);}} T={T}><Ic.X/></NvBtn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!lots.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No lots recorded yet. Add individual buy transactions to track weighted average cost.</div>}
+
+      {/* Grouped by stock */}
+      {grouped.map(g=>{
+        const cp=curPrice(g.symbol);
+        const curVal=cp?cp*g.totalQty:null;
+        const pnl=curVal?curVal-g.totalInvested:null;
+        const pnlPct=pnl?pnl/g.totalInvested*100:null;
+        return(
+          <div key={g.symbol} style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+            {/* Stock header */}
+            <div style={{padding:'12px 16px',background:T.surface3,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                <span style={{fontWeight:700,color:T.accent,fontSize:14}}>{short(g.symbol)}</span>
+                <span style={{fontSize:12,color:T.text3}}>{g.name}</span>
+                <span style={{fontSize:11,color:T.text3,background:T.surface4,padding:'2px 8px',borderRadius:10}}>{g.lots.length} lot{g.lots.length!==1?'s':''}</span>
+              </div>
+              <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                <div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3,marginBottom:2}}>Total Qty</div><div style={{fontWeight:700,color:T.text}}>{g.totalQty}</div></div>
+                <div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3,marginBottom:2}}>Avg Buy</div><div style={{fontWeight:700,color:T.text}}>{fmt(g.avgBuy,g.currency)}</div></div>
+                <div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3,marginBottom:2}}>Invested</div><div style={{fontWeight:700,color:T.text}}>{fmt(g.totalInvested,g.currency)}</div></div>
+                {cp&&<div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3,marginBottom:2}}>Current</div><div style={{fontWeight:700,color:T.cyan}}>{fmt(cp,g.currency)}</div></div>}
+                {pnl!=null&&<div style={{textAlign:'right'}}><div style={{fontSize:10,color:T.text3,marginBottom:2}}>P&L</div><div style={{fontWeight:700,color:pnl>=0?T.success:T.danger}}>{pnl>=0?'+':'−'}{fmt(Math.abs(pnl),g.currency)} ({pnlPct?.toFixed(1)}%)</div></div>}
+              </div>
+            </div>
+            {/* Individual lots */}
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr style={{background:T.surface4}}>
+                {['Buy Date','Qty','Buy Price','Invested','Current Value','P&L','P&L %','Days Held','Notes',''].map(h=>(
+                  <th key={h} style={{...tdS,color:T.text3,fontWeight:600,fontSize:10}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {g.lots.map((lot,i)=>{
+                  const cp2=curPrice(lot.symbol);
+                  const inv=lot.qty*lot.buyPrice;
+                  const cv=cp2?cp2*lot.qty:null;
+                  const pnl2=cv?cv-inv:null;
+                  const pnlP=pnl2?pnl2/inv*100:null;
+                  const days=Math.floor((Date.now()-new Date(lot.buyDate))/86400000);
+                  return(
+                    <tr key={lot.id} style={{background:i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                      <td style={{...tdS,color:T.text}}>{new Date(lot.buyDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+                      <td style={{...tdS,color:T.text2}}>{lot.qty}</td>
+                      <td style={{...tdS,color:T.text2}}>{fmt(lot.buyPrice,lot.currency)}</td>
+                      <td style={{...tdS,color:T.text}}>{fmt(inv,lot.currency)}</td>
+                      <td style={{...tdS,color:T.cyan}}>{cv?fmt(cv,lot.currency):'—'}</td>
+                      <td style={{...tdS}}>{pnl2!=null?<span style={{fontWeight:700,color:pnl2>=0?T.success:T.danger}}>{pnl2>=0?'+':'−'}{fmt(Math.abs(pnl2),lot.currency)}</span>:'—'}</td>
+                      <td style={{...tdS}}>{pnlP!=null?<span style={{fontWeight:700,color:pnlP>=0?T.success:T.danger}}>{pnlP>=0?'+':''}{pnlP.toFixed(2)}%</span>:'—'}</td>
+                      <td style={{...tdS,color:days>=365?T.success:T.warning}}><span style={{fontWeight:600}}>{days}d</span><span style={{fontSize:10,marginLeft:4,color:T.text3}}>{days>=365?'LTCG':'STCG'}</span></td>
+                      <td style={{...tdS,color:T.text3}}>{lot.notes||'—'}</td>
+                      <td style={{...tdS,textAlign:'center'}}><button onClick={()=>removeLot(lot.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:'3px 6px',borderRadius:4,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;}}><Ic.Trash/></button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: TAX P&L (STCG / LTCG) ────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+function TaxModule({T,prices}) {
+  const [lots,setLots]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_lots')||'[]');}catch{return [];}});
+  const [soldLots,setSoldLots]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_sold_lots')||'[]');}catch{return [];}});
+  const [showSell,setShowSell]=useState(null); // lot id
+  const [sellForm,setSellForm]=useState({sellPrice:'',sellDate:new Date().toISOString().slice(0,10),qty:''});
+  const FY_START=new Date('2025-04-01').getTime();
+  const FY_END=new Date('2026-03-31').getTime();
+
+  useEffect(()=>{localStorage.setItem('pm_sold_lots',JSON.stringify(soldLots));},[soldLots]);
+
+  const recordSale=(lotId)=>{
+    const lot=lots.find(l=>l.id===lotId);if(!lot)return;
+    const sellQty=parseFloat(sellForm.qty)||lot.qty;
+    const sellPrice=parseFloat(sellForm.sellPrice);if(!sellPrice)return;
+    const days=Math.floor((new Date(sellForm.sellDate)-new Date(lot.buyDate))/86400000);
+    const isLTCG=days>=365;
+    const gain=(sellPrice-lot.buyPrice)*sellQty;
+    const taxRate=lot.currency==='INR'?(isLTCG?0.10:0.15):(isLTCG?0.20:0.30);
+    const taxable=isLTCG&&lot.currency==='INR'?Math.max(0,gain-100000):gain;
+    const tax=Math.max(0,taxable*taxRate);
+    setSoldLots(p=>[{id:Date.now(),symbol:lot.symbol,name:lot.name,currency:lot.currency,buyPrice:lot.buyPrice,buyDate:lot.buyDate,sellPrice,sellDate:sellForm.sellDate,qty:sellQty,gain,isLTCG,days,tax,taxRate},...p]);
+    if(sellQty>=lot.qty)setLots(p=>p.filter(l=>l.id!==lotId));
+    else setLots(p=>p.map(l=>l.id===lotId?{...l,qty:l.qty-sellQty}:l));
+    setShowSell(null);setSellForm({sellPrice:'',sellDate:new Date().toISOString().slice(0,10),qty:''});
+  };
+
+  // Unrealized gains from open lots
+  const unrealized=useMemo(()=>lots.map(l=>{
+    const p=prices[l.symbol];const cp=p?.current??null;if(!cp)return null;
+    const days=Math.floor((Date.now()-new Date(l.buyDate))/86400000);
+    const isLTCG=days>=365;const gain=(cp-l.buyPrice)*l.qty;
+    const taxRate=l.currency==='INR'?(isLTCG?0.10:0.15):(isLTCG?0.20:0.30);
+    const taxable=isLTCG&&l.currency==='INR'?Math.max(0,gain-100000):gain;
+    const tax=Math.max(0,taxable*taxRate);
+    return{...l,cp,days,isLTCG,gain,tax,taxRate};
+  }).filter(Boolean),[lots,prices]);
+
+  const fyRealized=soldLots.filter(s=>new Date(s.sellDate).getTime()>=FY_START&&new Date(s.sellDate).getTime()<=FY_END);
+  const stcgRealized=fyRealized.filter(s=>!s.isLTCG).reduce((a,s)=>a+s.gain,0);
+  const ltcgRealized=fyRealized.filter(s=>s.isLTCG).reduce((a,s)=>a+s.gain,0);
+  const taxRealized=fyRealized.reduce((a,s)=>a+s.tax,0);
+  const stcgUnrealized=unrealized.filter(u=>!u.isLTCG).reduce((a,u)=>a+u.gain,0);
+  const ltcgUnrealized=unrealized.filter(u=>u.isLTCG).reduce((a,u)=>a+u.gain,0);
+  const taxUnrealized=unrealized.reduce((a,u)=>a+u.tax,0);
+
+  const csvExport=()=>{
+    const h=['Symbol','Buy Date','Sell Date','Qty','Buy Price','Sell Price','Gain/Loss','Type','Days','Tax Rate','Est. Tax'];
+    const body=soldLots.map(s=>[s.symbol,s.buyDate,s.sellDate,s.qty,s.buyPrice,s.sellPrice,s.gain.toFixed(2),s.isLTCG?'LTCG':'STCG',s.days,`${(s.taxRate*100).toFixed(0)}%`,s.tax.toFixed(2)]);
+    const csv=[h,...body].map(r=>r.join(',')).join('\n');
+    const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`tax_pnl_FY2025-26_${new Date().toISOString().slice(0,10)}.csv`});a.click();
+  };
+
+  const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
+  const tdS={padding:'9px 12px',borderBottom:`1px solid ${T.border}`,fontSize:12};
+  const SumCard=({label,value,sub,vc})=>(
+    <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:'14px 18px'}}>
+      <div style={{fontSize:11,color:T.text3,fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>{label}</div>
+      <div style={{fontSize:18,fontWeight:700,color:vc||T.text}}>{value}</div>
+      {sub&&<div style={{fontSize:11,color:T.text3,marginTop:4}}>{sub}</div>}
+    </div>
+  );
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Tax P&L — FY 2025-26</div>
+          <div style={{fontSize:13,color:T.text3}}>STCG 15% · LTCG 10% (above ₹1L) · Holding &lt; 12 months = STCG</div>
+        </div>
+        <NvBtn onClick={csvExport} disabled={!soldLots.length} T={T}><Ic.Download/> Export ITR Data</NvBtn>
+      </div>
+
+      {/* Summary cards */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12}}>
+        <SumCard label="Realized STCG" value={`${stcgRealized>=0?'+':'−'}₹${Math.abs(stcgRealized).toLocaleString('en-IN',{maximumFractionDigits:0})}`} sub="Tax @ 15%" vc={stcgRealized>=0?T.success:T.danger}/>
+        <SumCard label="Realized LTCG" value={`${ltcgRealized>=0?'+':'−'}₹${Math.abs(ltcgRealized).toLocaleString('en-IN',{maximumFractionDigits:0})}`} sub="Tax @ 10% (above ₹1L)" vc={ltcgRealized>=0?T.success:T.danger}/>
+        <SumCard label="Total Tax Liability" value={`₹${taxRealized.toLocaleString('en-IN',{maximumFractionDigits:0})}`} sub={`${fyRealized.length} realized transactions`} vc={T.danger}/>
+        <SumCard label="Unrealized STCG" value={`${stcgUnrealized>=0?'+':'−'}₹${Math.abs(stcgUnrealized).toLocaleString('en-IN',{maximumFractionDigits:0})}`} sub="If sold today" vc={stcgUnrealized>=0?T.warning:T.text3}/>
+        <SumCard label="Unrealized LTCG" value={`${ltcgUnrealized>=0?'+':'−'}₹${Math.abs(ltcgUnrealized).toLocaleString('en-IN',{maximumFractionDigits:0})}`} sub="If sold today" vc={ltcgUnrealized>=0?T.success:T.text3}/>
+        <SumCard label="Potential Tax (Unrealized)" value={`₹${taxUnrealized.toLocaleString('en-IN',{maximumFractionDigits:0})}`} sub="If all positions closed today" vc={T.warning}/>
+      </div>
+
+      {/* Open lots with sell option */}
+      {lots.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
+            <div style={{width:3,height:16,background:T.accent,borderRadius:2}}/>
+            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Open Lots (from Lots Tracker)</span>
+            <span style={{fontSize:11,color:T.text3,marginLeft:4}}>Record a sale to calculate tax</span>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr style={{background:T.surface3}}>
+                {['Symbol','Buy Date','Qty','Buy Price','Days Held','Type','Current P&L','Est. Tax',''].map(h=>(
+                  <th key={h} style={{...tdS,color:T.text3,fontWeight:600,fontSize:10}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {lots.map((lot,i)=>{
+                  const u=unrealized.find(u=>u.id===lot.id);
+                  const days=Math.floor((Date.now()-new Date(lot.buyDate))/86400000);
+                  const isLTCG=days>=365;
+                  return(
+                    <tr key={lot.id} style={{background:i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                      <td style={{...tdS,fontWeight:700,color:T.accent}}>{short(lot.symbol)}</td>
+                      <td style={{...tdS,color:T.text2}}>{new Date(lot.buyDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+                      <td style={{...tdS,color:T.text}}>{lot.qty}</td>
+                      <td style={{...tdS,color:T.text}}>{fmt(lot.buyPrice,lot.currency)}</td>
+                      <td style={{...tdS,color:isLTCG?T.success:T.warning,fontWeight:600}}>{days}d</td>
+                      <td style={{...tdS}}><span style={{padding:'2px 8px',borderRadius:12,fontSize:10,fontWeight:700,background:isLTCG?T.successBg:T.warnBg,color:isLTCG?T.success:T.warning}}>{isLTCG?'LTCG':'STCG'}</span></td>
+                      <td style={{...tdS}}>{u?<span style={{fontWeight:700,color:u.gain>=0?T.success:T.danger}}>{u.gain>=0?'+':'−'}₹{Math.abs(u.gain).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>:'—'}</td>
+                      <td style={{...tdS,color:T.danger,fontWeight:600}}>{u?`₹${u.tax.toLocaleString('en-IN',{maximumFractionDigits:0})}`:'—'}</td>
+                      <td style={{...tdS}}>
+                        {showSell===lot.id?(
+                          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                            <input type="number" value={sellForm.sellPrice} onChange={e=>setSellForm(p=>({...p,sellPrice:e.target.value}))} placeholder="Sell price" style={{...INP,width:90}}/>
+                            <input type="number" value={sellForm.qty} onChange={e=>setSellForm(p=>({...p,qty:e.target.value}))} placeholder={`Qty (max ${lot.qty})`} style={{...INP,width:90}}/>
+                            <input type="date" value={sellForm.sellDate} onChange={e=>setSellForm(p=>({...p,sellDate:e.target.value}))} style={{...INP,width:120}}/>
+                            <NvBtn onClick={()=>recordSale(lot.id)} variant="primary" disabled={!sellForm.sellPrice} T={T}>Record</NvBtn>
+                            <NvBtn onClick={()=>setShowSell(null)} T={T}><Ic.X/></NvBtn>
+                          </div>
+                        ):(
+                          <NvBtn onClick={()=>{setShowSell(lot.id);setSellForm({sellPrice:'',sellDate:new Date().toISOString().slice(0,10),qty:lot.qty});}} T={T}>Record Sale</NvBtn>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Realized transactions this FY */}
+      {fyRealized.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
+            <div style={{width:3,height:16,background:T.success,borderRadius:2}}/>
+            <span style={{fontSize:13,fontWeight:700,color:T.text}}>Realized Transactions — FY 2025-26</span>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr style={{background:T.surface3}}>
+                {['Symbol','Buy Date','Sell Date','Qty','Buy Price','Sell Price','Gain/Loss','Type','Days','Tax Rate','Est. Tax'].map(h=>(
+                  <th key={h} style={{...tdS,color:T.text3,fontWeight:600,fontSize:10}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {fyRealized.map((s,i)=>(
+                  <tr key={s.id} style={{background:i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                    <td style={{...tdS,fontWeight:700,color:T.accent}}>{short(s.symbol)}</td>
+                    <td style={{...tdS,color:T.text3}}>{new Date(s.buyDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'})}</td>
+                    <td style={{...tdS,color:T.text3}}>{new Date(s.sellDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'})}</td>
+                    <td style={{...tdS,color:T.text}}>{s.qty}</td>
+                    <td style={{...tdS,color:T.text2}}>{fmt(s.buyPrice,s.currency)}</td>
+                    <td style={{...tdS,color:T.text2}}>{fmt(s.sellPrice,s.currency)}</td>
+                    <td style={{...tdS,fontWeight:700,color:s.gain>=0?T.success:T.danger}}>{s.gain>=0?'+':'−'}{fmt(Math.abs(s.gain),s.currency)}</td>
+                    <td style={{...tdS}}><span style={{padding:'2px 8px',borderRadius:12,fontSize:10,fontWeight:700,background:s.isLTCG?T.successBg:T.warnBg,color:s.isLTCG?T.success:T.warning}}>{s.isLTCG?'LTCG':'STCG'}</span></td>
+                    <td style={{...tdS,color:T.text3}}>{s.days}d</td>
+                    <td style={{...tdS,color:T.text3}}>{(s.taxRate*100).toFixed(0)}%</td>
+                    <td style={{...tdS,fontWeight:700,color:T.danger}}>{fmt(s.tax,s.currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!lots.length&&!soldLots.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No lots recorded. Add buy transactions in the Lots Tracker to compute tax liability.</div>}
+      <div style={{fontSize:11,color:T.text3,fontStyle:'italic',padding:'0 4px'}}>⚠ Estimates only. Tax rates: Equity STCG 15%, LTCG 10% (above ₹1L exemption). Consult a CA for ITR filing.</div>
+    </div>
+  );
+}
+
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 function AppInner() {
   const [tweaks,setTweaks]=useState(()=>{try{const s=localStorage.getItem('pm_tweaks');return s?{...TWEAK_DEF,...JSON.parse(s)}:TWEAK_DEF;}catch{return TWEAK_DEF;}});
@@ -1275,6 +1830,7 @@ function AppInner() {
   const [lastUpdated,setLastUpdated]=useState(null);
   const [updateAvail,setUpdateAvail]=useState(false);
   const [mainTab,setMainTab]=useState('IN');
+  const [activeModule,setActiveModule]=useState(null);
   const [openStockTabs,setOpenStockTabs]=useState([]);
   const [stockDetails,setStockDetails]=useState({});
 
@@ -1543,6 +2099,11 @@ Respond ONLY as a JSON object with these keys:
     {id:'IN', label:'Indian Equity', icon:<Ic.India/>, flag:'🇮🇳', color:T.inColor},
     {id:'US', label:'US Equity',     icon:<Ic.US/>,    flag:'🇺🇸', color:T.usColor},
   ];
+  const MOD_NAV=[
+    {id:'watchlist',label:'Watchlist',icon:'👁',color:'#a855f7'},
+    {id:'lots',     label:'Buy Lots', icon:'📋',color:'#06b6d4'},
+    {id:'tax',      label:'Tax P&L',  icon:'🧾',color:'#f59e0b'},
+  ];
 
   return(
     <div style={{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',background:T.bg,height:'100vh',display:'flex',flexDirection:'column',color:T.text,overflow:'hidden'}}>
@@ -1566,7 +2127,7 @@ Respond ONLY as a JSON object with these keys:
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.2</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.3</div>
           </div>
         </div>
 
@@ -1618,14 +2179,25 @@ Respond ONLY as a JSON object with these keys:
           {/* Main nav: IN | US */}
           {NAV.map(nav=>{
             const active=mainTab===nav.id||mainTab.startsWith('stock:');
-            const isActive=mainTab===nav.id;
+            const isActive=!activeModule&&mainTab===nav.id;
             return(
-              <button key={nav.id} onClick={()=>setMainTab(nav.id)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:isActive?T.accentBg:'transparent',border:'none',borderLeft:isActive?`3px solid ${T.accent}`:'3px solid transparent',cursor:'pointer',width:'100%',textAlign:'left',color:isActive?T.accent:T.text2,transition:'all .15s',marginBottom:2}}>
+              <button key={nav.id} onClick={()=>{setMainTab(nav.id);setActiveModule(null);}} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:isActive?T.accentBg:'transparent',border:'none',borderLeft:isActive?`3px solid ${T.accent}`:'3px solid transparent',cursor:'pointer',width:'100%',textAlign:'left',color:isActive?T.accent:T.text2,transition:'all .15s',marginBottom:2}}>
                 <span style={{fontSize:15}}>{nav.flag}</span>
                 <span style={{fontSize:13,fontWeight:isActive?600:400}}>{nav.label}</span>
               </button>
             );
           })}
+          {/* Module nav */}
+          <div style={{height:1,background:T.border,margin:'8px 12px 4px'}}/>
+          <div style={{padding:'8px 12px 4px',fontSize:10,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.08em'}}>Tools</div>
+          {MOD_NAV.map(mod=>{const isA=activeModule===mod.id;return(
+            <button key={mod.id} onClick={()=>{setActiveModule(isA?null:mod.id);}} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 14px',background:isA?`${mod.color}18`:'transparent',border:'none',borderLeft:isA?`3px solid ${mod.color}`:'3px solid transparent',cursor:'pointer',width:'100%',textAlign:'left',color:isA?mod.color:T.text2,transition:'all .15s',marginBottom:2}}>
+              <span style={{fontSize:14}}>{mod.icon}</span>
+              <span style={{fontSize:12,fontWeight:isA?600:400}}>{mod.label}</span>
+            </button>
+          );})}
+          <div style={{height:1,background:T.border,margin:'4px 12px 8px'}}/>
+
           {/* Stock tabs in sidebar */}
           {openStockTabs.length>0&&<>
             <div style={{padding:'12px 12px 6px',fontSize:10,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.08em',marginTop:8}}>Open Stocks</div>
@@ -1646,9 +2218,12 @@ Respond ONLY as a JSON object with these keys:
 
         {/* Main Content */}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
-          {activeStock?(
+          {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr}/>}
+          {activeModule==='lots'&&<LotsModule T={T} prices={prices}/>}
+          {activeModule==='tax'&&<TaxModule T={T} prices={prices}/>}
+          {!activeModule&&activeStock?(
             <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
-          ):(
+          ):(!activeModule&&(
             <>
               {/* Portfolio sub-tabs */}
               <PortfolioTabs portfolios={portfolios} activeId={activeId} onSwitch={setActiveId} onAdd={addPortfolio} onRename={renamePortfolio} onDelete={deletePortfolio} T={T}/>
@@ -1666,7 +2241,7 @@ Respond ONLY as a JSON object with these keys:
                 </div>
               </div>
             </>
-          )}
+          ))}
         </div>
       </div>
 
