@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import { isUS, short, fmtQty, fmt, fmtDual, fmtBig, fmtPct, gColor, sortRows } from './utils';
+import { mkT, PIE, PORT_COLORS, DEF_PF, TWEAK_DEF } from './theme';
+import { Ic } from './icons';
+import { callGroq, callGemini, callAI, extractJSON } from './ai';
+import { useYahooSearch, useNotes } from './hooks';
 
 // ── ERROR BOUNDARY ────────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -36,191 +41,15 @@ class ErrorBoundary extends React.Component {
 }
 
 
-// ── NVIDIA-STYLE THEME ────────────────────────────────────────────────────────
-const mkT = (dark = true) => dark ? {
-  bg:       '#0a0a0a',
-  sidebar:  '#111111',
-  surface:  '#161616',
-  surface2: '#1c1c1c',
-  surface3: '#222222',
-  surface4: '#2a2a2a',
-  border:   '#2a2a2a',
-  border2:  '#333333',
-  text:     '#ffffff',
-  text2:    '#a0a0a0',
-  text3:    '#606060',
-  accent:   '#76b900',
-  accentDim:'#4a7500',
-  accentBg: 'rgba(118,185,0,.10)',
-  accentBg2:'rgba(118,185,0,.05)',
-  success:  '#76b900',
-  successBg:'rgba(118,185,0,.12)',
-  danger:   '#f44336',
-  dangerBg: 'rgba(244,67,54,.12)',
-  warning:  '#ff9800',
-  warnBg:   'rgba(255,152,0,.12)',
-  cyan:     '#00b4d8',
-  inColor:  '#ff9800',
-  usColor:  '#00b4d8',
-  r:        8,
-  dark:     true,
-} : {
-  bg:       '#f5f5f5',
-  sidebar:  '#1a1a1a',
-  surface:  '#ffffff',
-  surface2: '#f9f9f9',
-  surface3: '#f0f0f0',
-  surface4: '#e8e8e8',
-  border:   '#e0e0e0',
-  border2:  '#d0d0d0',
-  text:     '#111111',
-  text2:    '#555555',
-  text3:    '#999999',
-  accent:   '#76b900',
-  accentDim:'#5a8e00',
-  accentBg: 'rgba(118,185,0,.10)',
-  accentBg2:'rgba(118,185,0,.05)',
-  success:  '#388e3c',
-  successBg:'rgba(56,142,60,.10)',
-  danger:   '#d32f2f',
-  dangerBg: 'rgba(211,47,47,.10)',
-  warning:  '#f57c00',
-  warnBg:   'rgba(245,124,0,.10)',
-  cyan:     '#0077b6',
-  inColor:  '#f57c00',
-  usColor:  '#0077b6',
-  r:        8,
-  dark:     false,
-};
+// Theme, icons, utils, AI imported from separate modules
+// ── REMOVED: mkT moved to theme.js ──
+// Theme, icons, utils, AI providers: imported from ./theme, ./icons, ./utils, ./ai
 
-const PIE = ['#76b900','#00b4d8','#ff9800','#f44336','#9c27b0','#2196f3','#00bcd4','#ff5722','#8bc34a','#03a9f4','#cddc39','#ffc107','#e91e63','#00acc1','#7cb342'];
-const PORT_COLORS = ['#76b900','#00b4d8','#ff9800','#f44336','#9c27b0','#2196f3','#00bcd4','#ff5722'];
 
-// ── DEFAULTS ──────────────────────────────────────────────────────────────────
-const DEF_H = [
-  {id:1,symbol:'RELIANCE.NS',name:'Reliance Industries',qty:10,unpledgedQty:null,buyPrice:2800},
-  {id:2,symbol:'TCS.NS',name:'TCS',qty:5,unpledgedQty:null,buyPrice:3500},
-  {id:3,symbol:'INFY.NS',name:'Infosys',qty:20,unpledgedQty:null,buyPrice:1400},
-  {id:4,symbol:'VEDL.NS',name:'Vedanta',qty:50,unpledgedQty:null,buyPrice:280},
-  {id:5,symbol:'AAPL',name:'Apple Inc.',qty:3,unpledgedQty:null,buyPrice:160},
-  {id:6,symbol:'MSFT',name:'Microsoft Corp.',qty:2,unpledgedQty:null,buyPrice:280},
-];
-const DEF_T = {1:3200,2:4000,3:1800,5:220,6:450};
-const DEF_PF = [{id:1,name:'Main Portfolio',holdings:DEF_H,targets:DEF_T}];
 
-// ── AI PROVIDERS ──────────────────────────────────────────────────────────────
-const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
-const GEMINI_URL = key =>
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
 
-async function callGroq(apiKey, prompt) {
-  if (!apiKey) throw new Error('No Groq key');
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
-    body: JSON.stringify({model:GROQ_MODEL,messages:[{role:'user',content:prompt}],temperature:0.3,max_tokens:1024}),
-  });
-  if (!res.ok) {const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`HTTP ${res.status}`);}
-  return (await res.json())?.choices?.[0]?.message?.content||'';
-}
 
-async function callGemini(apiKey, prompt) {
-  if (!apiKey) throw new Error('No Gemini key');
-  const res = await fetch(GEMINI_URL(apiKey), {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.3,maxOutputTokens:1024}}),
-  });
-  if (!res.ok) {const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`HTTP ${res.status}`);}
-  return (await res.json())?.candidates?.[0]?.content?.parts?.[0]?.text||'';
-}
 
-async function callAI(groqKey, geminiKey, primary, prompt) {
-  const order = primary==='groq'
-    ? [{key:groqKey,fn:callGroq,name:'Groq'},{key:geminiKey,fn:callGemini,name:'Gemini'}]
-    : [{key:geminiKey,fn:callGemini,name:'Gemini'},{key:groqKey,fn:callGroq,name:'Groq'}];
-  let lastErr;
-  for (const {key,fn,name} of order) {
-    if (!key) continue;
-    try {return {text:await fn(key,prompt),usedProvider:name};} catch(e){lastErr=e;}
-  }
-  throw lastErr||new Error('No AI provider configured');
-}
-
-function extractJSON(text) {
-  try {
-    const m=text.match(/```(?:json)?\s*([\s\S]*?)```/)||text.match(/(\{[\s\S]*\})/);
-    return m?JSON.parse(m[1].trim()):JSON.parse(text.trim());
-  } catch {return null;}
-}
-
-const TWEAK_DEF = {darkMode:true,autoRefreshMins:5,compactRows:false,showCharts:true,glowIntensity:60};
-
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-const isUS    = s => !s.endsWith('.NS') && !s.endsWith('.BO');
-const short   = s => s.replace('.NS','').replace('.BO','');
-const fmtQty  = v => v==null?'—':parseFloat(v.toFixed(8)).toString();
-const fmt     = (v,cur='INR') => {
-  if(v==null||isNaN(v))return'—';
-  return(cur==='USD'?'$':'₹')+Math.abs(v).toLocaleString(cur==='USD'?'en-US':'en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-};
-// Show USD value + INR equivalent: "$1,234.56  ≈ ₹1,02,345"
-const fmtDual = (v, fx) => {
-  if(v==null||isNaN(v)||!fx) return fmt(v,'USD');
-  const sign=v>=0?'+':'−';
-  const abs=Math.abs(v);
-  const usd=`${sign}$${abs.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-  const inr=`₹${(abs*fx).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0})}`;
-  return `${usd}  ≈ ${inr}`;
-};
-
-const fmtBig = (v,cur='INR') => {
-  if(v==null||isNaN(v))return'—';
-  const s=cur==='USD'?'$':'₹';
-  if(Math.abs(v)>=1e12)return`${s}${(v/1e12).toFixed(2)}T`;
-  if(Math.abs(v)>=1e9) return`${s}${(v/1e9).toFixed(2)}B`;
-  if(Math.abs(v)>=1e7) return`${s}${(v/1e7).toFixed(2)}Cr`;
-  if(Math.abs(v)>=1e5) return`${s}${(v/1e5).toFixed(2)}L`;
-  return fmt(v,cur);
-};
-const fmtPct  = v => v==null||isNaN(v)?'—':`${v>=0?'+':''}${v.toFixed(2)}%`;
-const gColor  = (v,T) => v==null||isNaN(v)?T.text2:v>=0?T.success:T.danger;
-const sortRows = (rows,col,dir) => [...rows].sort((a,b)=>{
-  let va=a[col],vb=b[col];
-  if(va==null&&vb==null)return 0;if(va==null)return dir==='asc'?1:-1;if(vb==null)return dir==='asc'?-1:1;
-  if(typeof va==='string')va=va.toLowerCase();if(typeof vb==='string')vb=vb.toLowerCase();
-  return dir==='asc'?(va<vb?-1:va>vb?1:0):(va>vb?-1:va<vb?1:0);
-});
-
-// ── ICONS ─────────────────────────────────────────────────────────────────────
-const Ic = {
-  Plus:     ()=><svg width="14"height="14"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><line x1="12"y1="5"x2="12"y2="19"/><line x1="5"y1="12"x2="19"y2="12"/></svg>,
-  Trash:    ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>,
-  Refresh:  ({s})=><span style={{display:'inline-flex',width:13,height:13,flexShrink:0,willChange:s?'transform':'auto'}}><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"style={{animation:s?'spin .8s linear infinite':'none',transformOrigin:'center',display:'block'}}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>,
-  Download: ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12"y1="15"x2="12"y2="3"/></svg>,
-  Upload:   ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12"y1="3"x2="12"y2="15"/></svg>,
-  Search:   ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="11"cy="11"r="8"/><line x1="21"y1="21"x2="16.65"y2="16.65"/></svg>,
-  Pencil:   ()=><svg width="12"height="12"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
-  Check:    ()=><svg width="12"height="12"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>,
-  X:        ()=><svg width="11"height="11"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2.5"><line x1="18"y1="6"x2="6"y2="18"/><line x1="6"y1="6"x2="18"y2="18"/></svg>,
-  Moon:     ()=><svg width="14"height="14"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>,
-  Sun:      ()=><svg width="14"height="14"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="12"cy="12"r="5"/><line x1="12"y1="1"x2="12"y2="3"/><line x1="12"y1="21"x2="12"y2="23"/><line x1="4.22"y1="4.22"x2="5.64"y2="5.64"/><line x1="18.36"y1="18.36"x2="19.78"y2="19.78"/><line x1="1"y1="12"x2="3"y2="12"/><line x1="21"y1="12"x2="23"y2="12"/><line x1="4.22"y1="19.78"x2="5.64"y2="18.36"/><line x1="18.36"y1="5.64"x2="19.78"y2="4.22"/></svg>,
-  ChevD:    ()=><svg width="12"height="12"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>,
-  ChevU:    ()=><svg width="12"height="12"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2.5"><polyline points="18 15 12 9 6 15"/></svg>,
-  Settings: ()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="12"cy="12"r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
-  Chart:    ()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><line x1="18"y1="20"x2="18"y2="10"/><line x1="12"y1="20"x2="12"y2="4"/><line x1="6"y1="20"x2="6"y2="14"/><line x1="2"y1="20"x2="22"y2="20"/></svg>,
-  Portfolio:()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><rect x="2"y="7"width="20"height="14"rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12"y1="12"x2="12"y2="16"/><line x1="10"y1="14"x2="14"y2="14"/></svg>,
-  India:    ()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="12"cy="12"r="10"/><line x1="2"y1="12"x2="22"y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
-  US:       ()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="12"cy="12"r="10"/><line x1="2"y1="12"x2="22"y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
-  Target:   ()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="12"cy="12"r="10"/><circle cx="12"cy="12"r="6"/><circle cx="12"cy="12"r="2"/></svg>,
-  Minimize: ()=><svg width="11"height="11"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2.5"><line x1="5"y1="12"x2="19"y2="12"/></svg>,
-  Maximize: ()=><svg width="10"height="10"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><rect x="3"y="3"width="18"height="18"rx="1"/></svg>,
-  Update:   ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>,
-  Alert:    ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><circle cx="12"cy="12"r="10"/><line x1="12"y1="8"x2="12"y2="12"/><line x1="12"y1="16"x2="12.01"y2="16"/></svg>,
-  File:     ()=><svg width="13"height="13"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
-  LineChart:()=><svg width="15"height="15"viewBox="0 0 24 24"fill="none"stroke="currentColor"strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
-};
 
 // ── NV BUTTON ─────────────────────────────────────────────────────────────────
 const NvBtn = ({children,onClick,variant='ghost',disabled,style:sx={}}) => {
@@ -588,7 +417,7 @@ function StockDetailView({symbol,holding,detail,prices,targets,onSaveTarget,onRe
           <div style={{padding:'4px 16px 12px'}}>
             {holding?[
               {l:'Quantity',v:fmtQty(holding.qty)},
-              {l:'Unpledged Qty',v:holding.unpledgedQty!=null?fmtQty(holding.unpledgedQty):'—',vc:holding.unpledgedQty!=null&&holding.unpledgedQty<holding.qty?T.warning:null},
+              {l:'Free Qty',v:holding.unpledgedQty!=null?fmtQty(holding.unpledgedQty):'—',vc:holding.unpledgedQty!=null&&holding.unpledgedQty<holding.qty?T.warning:null},
               {l:'Avg Buy Price',v:fmt(holding.buyPrice,currency)},
               {l:'Invested',v:fmt(invested,currency)},
               {l:'Market Value',v:curValue!=null?fmt(curValue,currency):'—'},
@@ -799,7 +628,7 @@ function CSVImportModal({onImport,onClose,market,T}) {
           <div style={{background:T.surface2,borderRadius:6,padding:'12px 16px',fontSize:12}}>
             <div style={{fontWeight:600,color:T.text,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><Ic.File/> Required columns</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 16px',color:T.text3}}>
-              {[['Symbol *','RELIANCE.NS / AAPL'],['Qty *','10, 2.5'],['Buy Price *','2800, 150'],['Name','Optional'],['Analyst Target','Optional']].map(([k,v])=>(
+              {[['Symbol *','RELIANCE.NS / AAPL'],['Qty *','10, 2.5'],['Buy Price *','2800, 150'],['Name','Optional']].map(([k,v])=>(
                 <div key={k} style={{display:'flex',gap:8,padding:'2px 0'}}><span style={{color:T.accent,fontWeight:600,minWidth:100}}>{k}</span><span>{v}</span></div>
               ))}
             </div>
@@ -949,12 +778,12 @@ function AIAnalysis({symbol,holding,analysis,groqKey,geminiKey,primaryAI,onRefre
 }
 
 // ── HOLDINGS TABLE ────────────────────────────────────────────────────────────
-function Section({title,flag,accent,rows,currency,usdInr,targets,onSaveTarget,onSaveUnpledged,onRemove,fetchPrices,loading,error,lastUpdated,compact,onImportCSV,addHolding,onRowClick,T}) {
+function Section({title,flag,accent,rows,currency,usdInr,onSaveUnpledged,onRemove,fetchPrices,loading,error,lastUpdated,compact,onImportCSV,addHolding,onRowClick,T}) {
   const [sort,setSort]=useState({col:'allocPct',dir:'desc'});
   const [filter,setFilter]=useState('');
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({symbol:'',name:'',qty:'',buyPrice:''});
-  const [srch,setSrch]=useState('');const [results,setResults]=useState([]);const [busyS,setBusyS]=useState(false);const [focused,setFocused]=useState(false);const timer=useRef(null);
+  const {srch,setSrch,results,setResults,busyS,focused,setFocused,doSearch,clearSearch}=useYahooSearch();
   const totalSect=rows.reduce((s,r)=>s+(r.curValue??r.invested),0)||1;
   const totalInv=rows.reduce((s,r)=>s+r.invested,0),totalCur=rows.reduce((s,r)=>s+(r.curValue??r.invested),0);
   const totalGain=totalCur-totalInv,totalGainP=totalInv?(totalGain/totalInv)*100:0,dayTotal=rows.reduce((s,r)=>s+(r.dayPL??0),0);
@@ -962,27 +791,13 @@ function Section({title,flag,accent,rows,currency,usdInr,targets,onSaveTarget,on
   const srt=useMemo(()=>sortRows(aug,sort.col,sort.dir),[aug,sort]);
   const flt=useMemo(()=>filter.trim()?srt.filter(r=>r.name.toLowerCase().includes(filter.toLowerCase())||r.symbol.toLowerCase().includes(filter.toLowerCase())):srt,[srt,filter]);
   const onSort=col=>setSort(p=>({col,dir:p.col===col?(p.dir==='asc'?'desc':'asc'):'desc'}));
-  const doSearch=q=>{setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
-    timer.current=setTimeout(async()=>{
-      setBusyS(true);
-      try{
-        let quotes=[];
-        for(const host of ['query1','query2']){
-          try{
-            const res=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0&lang=en-US`,{headers:{Accept:'application/json'}});
-            if(res.ok){const json=await res.json();quotes=(json?.quotes??[]).filter(r=>r.symbol&&r.quoteType!=='OPTION').slice(0,7);if(quotes.length)break;}
-          }catch{}
-        }
-        setResults(quotes);
-      }catch{setResults([]);}
-      setBusyS(false);
-    },400);};
+  // doSearch: provided by useYahooSearch hook
   const selectResult=r=>{setForm(p=>({...p,symbol:r.symbol,name:r.longname||r.shortname||r.symbol}));setSrch(r.longname||r.shortname||r.symbol);setResults([]);};
   const doAdd=()=>{const sym=form.symbol.trim().toUpperCase();if(!sym||!form.qty||!form.buyPrice)return;addHolding({id:Date.now(),symbol:sym,name:form.name.trim()||sym,qty:parseFloat(parseFloat(form.qty).toFixed(8)),buyPrice:parseFloat(form.buyPrice),unpledgedQty:null});setForm({symbol:'',name:'',qty:'',buyPrice:''});setSrch('');setResults([]);setShowAdd(false);};
   const buildExportData=()=>{
-    const h=['Stock','Symbol','Qty','Unpledged Qty','Buy Price','Invested','LTP','Day %','Day P&L','Value','P&L','P&L %','Alloc %','Target','Upside %'];
-    const body=rows.map(r=>{const tgt=targets[r.id],up=tgt!=null&&r.curPrice!=null?(tgt-r.curPrice)/r.curPrice*100:null;
-      return[r.name,r.symbol,fmtQty(r.qty),r.unpledgedQty!=null?fmtQty(r.unpledgedQty):'',r.buyPrice,r.invested.toFixed(2),r.curPrice?.toFixed(2)??'',r.dayChange?.toFixed(2)??'',r.dayPL?.toFixed(2)??'',r.curValue?.toFixed(2)??'',r.gain?.toFixed(2)??'',r.gainPct?.toFixed(2)??'',((r.curValue??r.invested)/totalSect*100).toFixed(2),tgt?.toFixed(2)??'',up?.toFixed(2)??''];});
+    const h=['Stock','Symbol','Qty','Free Qty','Buy Price','Invested','LTP','Day %','Day P&L','Value','P&L','P&L %','Alloc %'];
+    const body=rows.map(r=>{
+      return[r.name,r.symbol,fmtQty(r.qty),r.unpledgedQty!=null?fmtQty(r.unpledgedQty):'',r.buyPrice,r.invested.toFixed(2),r.curPrice?.toFixed(2)??'',r.dayChange?.toFixed(2)??'',r.dayPL?.toFixed(2)??'',r.curValue?.toFixed(2)??'',r.gain?.toFixed(2)??'',r.gainPct?.toFixed(2)??'',((r.curValue??r.invested)/totalSect*100).toFixed(2)];});
     return{h,body};
   };
   const csvExport=()=>{
@@ -1083,7 +898,7 @@ function Section({title,flag,accent,rows,currency,usdInr,targets,onSaveTarget,on
               <tr>
                 <SortTh T={T} label="Stock"          col="name"      sort={sort} onSort={onSort} minW={150} sticky/>
                 <SortTh T={T} label="Qty"            col="qty"       sort={sort} onSort={onSort} right minW={72}/>
-                <th style={{padding:'10px 12px',background:T.surface2,borderBottom:`1px solid ${T.border}`,color:T.text3,fontSize:11,fontWeight:600,textAlign:'right',minWidth:110,whiteSpace:'nowrap'}}>Unpledged Qty</th>
+                <th style={{padding:'10px 12px',background:T.surface2,borderBottom:`1px solid ${T.border}`,color:T.text3,fontSize:11,fontWeight:600,textAlign:'right',minWidth:72,whiteSpace:'nowrap'}}>Free Qty</th>
                 <SortTh T={T} label="Buy Price"      col="buyPrice"  sort={sort} onSort={onSort} right minW={90}/>
                 <SortTh T={T} label="Invested"       col="invested"  sort={sort} onSort={onSort} right minW={100}/>
                 <SortTh T={T} label="LTP"            col="curPrice"  sort={sort} onSort={onSort} right minW={100}/>
@@ -1093,12 +908,11 @@ function Section({title,flag,accent,rows,currency,usdInr,targets,onSaveTarget,on
                 <SortTh T={T} label="P&L"            col="gain"      sort={sort} onSort={onSort} right minW={110}/>
                 <SortTh T={T} label="P&L %"          col="gainPct"   sort={sort} onSort={onSort} right minW={76}/>
                 <SortTh T={T} label="Alloc %"        col="allocPct"  sort={sort} onSort={onSort} right minW={90}/>
-                <th style={{padding:'10px 12px',background:T.surface2,borderBottom:`1px solid ${T.border}`,color:T.text3,fontSize:11,fontWeight:600,minWidth:150,whiteSpace:'nowrap'}}>Analyst Target</th>
                 <th style={{padding:'10px 12px',background:T.surface2,borderBottom:`1px solid ${T.border}`,width:40}}/>
               </tr>
             </thead>
             <tbody>
-              {!flt.length&&<tr><td colSpan={14} style={{padding:32,textAlign:'center',color:T.text3,fontSize:13}}>{filter?'No matches found.':`No ${currency==='INR'?'Indian':'US'} holdings yet — click Add Holding.`}</td></tr>}
+              {!flt.length&&<tr><td colSpan={12} style={{padding:32,textAlign:'center',color:T.text3,fontSize:13}}>{filter?'No matches found.':`No ${currency==='INR'?'Indian':'US'} holdings yet — click Add Holding.`}</td></tr>}
               {flt.map((r)=>(
                 <tr key={r.id} style={{background:'transparent',cursor:'pointer',transition:'background .08s',borderLeft:'2px solid transparent'}}
                   onClick={()=>onRowClick(r.symbol)}
@@ -1139,7 +953,6 @@ function Section({title,flag,accent,rows,currency,usdInr,targets,onSaveTarget,on
                       <span style={{fontSize:11,color:T.text2,fontWeight:600,minWidth:36,textAlign:'right'}}>{r.allocPct.toFixed(1)}%</span>
                     </div>
                   </td>
-                  <td style={{...tdB}} onClick={e=>e.stopPropagation()}><TargetCell id={r.id} target={targets[r.id]??null} curPrice={r.curPrice} currency={currency} onSave={onSaveTarget} T={T} compact/></td>
                   <td style={{...tdB}} onClick={e=>e.stopPropagation()}><button onClick={()=>onRemove(r.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:'4px 6px',borderRadius:4,display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;e.currentTarget.style.background=T.dangerBg;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;e.currentTarget.style.background='none';}} title="Remove"><Ic.Trash/></button></td>
                 </tr>
               ))}
@@ -1269,11 +1082,7 @@ function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T})
 // Storage: pm_notes = { "SYMBOL": "note text" }
 // Also exports useNote() for StockDetailView inline note
 
-function useNotes() {
-  const [notes,setNotes]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_notes')||'{}');}catch{return {};}});
-  const saveNote=(sym,text)=>{setNotes(p=>{const n={...p};if(text.trim())n[sym]=text;else delete n[sym];localStorage.setItem('pm_notes',JSON.stringify(n));return n;});};
-  return{notes,saveNote};
-}
+// useNotes: imported from ./hooks
 
 function NotesModule({T,holdings}) {
   const {notes,saveNote}=useNotes();
@@ -1343,11 +1152,7 @@ function AlertsModule({T,prices,holdings}) {
   const [alerts,setAlerts]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_alerts')||'[]');}catch{return [];}});
   const [form,setForm]=useState({symbol:'',name:'',direction:'above',price:'',currency:'INR'});
   const [showAdd,setShowAdd]=useState(false);
-  const [srch,setSrch]=useState('');
-  const [results,setResults]=useState([]);
-  const [focused,setFocused]=useState(false);
-  const [busyS,setBusyS]=useState(false);
-  const timer=useRef(null);
+  const {srch,setSrch,results,setResults,focused,setFocused,busyS,doSearch,clearSearch}=useYahooSearch();
 
   useEffect(()=>{localStorage.setItem('pm_alerts',JSON.stringify(alerts));},[alerts]);
 
@@ -1380,18 +1185,7 @@ function AlertsModule({T,prices,holdings}) {
     }
   },[]);
 
-  const doSearch=q=>{
-    setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
-    timer.current=setTimeout(async()=>{
-      setBusyS(true);
-      try{
-        for(const host of ['query1','query2']){
-          const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});
-          if(r.ok){const j=await r.json();const q2=(j?.quotes??[]).filter(x=>x.symbol&&x.quoteType!=='OPTION').slice(0,7);if(q2.length){setResults(q2);break;}}
-        }
-      }catch{}setBusyS(false);
-    },400);
-  };
+  // doSearch: provided by useYahooSearch hook
 
   const addAlert=()=>{
     if(!form.symbol||!form.price)return;
@@ -1419,6 +1213,17 @@ function AlertsModule({T,prices,holdings}) {
       {showAdd&&(
         <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:18}}>
           <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Create Price Alert</div>
+          {/* Quick-add from portfolio */}
+          {holdings?.length>0&&!form.symbol&&(
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:6,textTransform:'uppercase',letterSpacing:'.05em'}}>Quick pick from portfolio</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {holdings.filter(h=>!alerts.some(a=>a.symbol===h.symbol&&!a.triggered)).map(h=>(
+                  <button key={h.symbol} onClick={()=>{setForm(p=>({...p,symbol:h.symbol,name:h.name,currency:isUS(h.symbol)?'USD':'INR'}));setSrch(h.name);}} style={{padding:'4px 10px',borderRadius:6,border:`1px solid ${T.border2}`,background:T.surface3,color:T.text2,cursor:'pointer',fontSize:11,fontWeight:600,transition:'all .12s',display:'flex',alignItems:'center',gap:4}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border2;e.currentTarget.style.color=T.text2;}}>{short(h.symbol)}</button>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{display:'grid',gridTemplateColumns:'2fr 0.8fr 0.8fr 0.6fr auto',gap:10,alignItems:'end'}}>
             <div>
               <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Stock</div>
@@ -1512,6 +1317,56 @@ function AlertsModule({T,prices,holdings}) {
           </table>
         </div>
       )}
+
+      {/* Portfolio Stocks — quick-set alerts for all holdings */}
+      {holdings?.length>0&&(
+        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{width:3,height:16,background:T.cyan,borderRadius:2}}/>
+              <span style={{fontSize:13,fontWeight:700,color:T.text}}>Portfolio Stocks</span>
+              <span style={{fontSize:11,color:T.text3,background:T.surface3,padding:'2px 8px',borderRadius:10,fontWeight:600}}>{holdings.length}</span>
+            </div>
+            <span style={{fontSize:11,color:T.text3}}>Set alerts directly from your holdings</span>
+          </div>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead><tr style={{background:T.surface3}}>{['Stock','LTP','Buy Price','Day %','Alert Status','Quick Set'].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700,textAlign:h==='Stock'?'left':'right'}}>{h}</th>)}</tr></thead>
+            <tbody>{holdings.map((h,i)=>{
+              const cp=prices[h.symbol]?.current;
+              const prev=prices[h.symbol]?.prev;
+              const dayPct=cp&&prev?((cp-prev)/prev*100):null;
+              const cur=isUS(h.symbol)?'USD':'INR';
+              const sym=cur==='USD'?'$':'₹';
+              const hasActive=alerts.some(a=>a.symbol===h.symbol&&!a.triggered);
+              const activeAlert=alerts.find(a=>a.symbol===h.symbol&&!a.triggered);
+              return(
+                <tr key={h.symbol} style={{background:i%2===0?T.surface2:T.surface3,transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                  <td style={{...tdS,textAlign:'left'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:28,height:28,borderRadius:6,background:isUS(h.symbol)?'rgba(0,180,216,.12)':'rgba(255,152,0,.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:isUS(h.symbol)?T.usColor:T.inColor,flexShrink:0}}>{short(h.symbol).slice(0,2)}</div>
+                      <div><div style={{fontWeight:700,color:T.text,fontSize:12}}>{short(h.symbol)}</div><div style={{fontSize:10,color:T.text3,maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.name}</div></div>
+                    </div>
+                  </td>
+                  <td style={{...tdS,textAlign:'right',fontWeight:700,color:T.text}}>{cp?`${sym}${cp.toFixed(2)}`:'—'}</td>
+                  <td style={{...tdS,textAlign:'right',color:T.text2}}>{sym}{h.buyPrice.toFixed(2)}</td>
+                  <td style={{...tdS,textAlign:'right'}}>{dayPct!=null?<span style={{fontWeight:700,color:dayPct>=0?T.success:T.danger}}>{dayPct>=0?'+':''}{dayPct.toFixed(2)}%</span>:'—'}</td>
+                  <td style={{...tdS,textAlign:'right'}}>{hasActive?<span style={{padding:'2px 8px',borderRadius:12,fontSize:10,fontWeight:700,background:T.accentBg,color:T.accent}}>{activeAlert.direction==='above'?'▲':'▼'} {sym}{activeAlert.price}</span>:<span style={{fontSize:10,color:T.text3}}>No alert</span>}</td>
+                  <td style={{...tdS,textAlign:'right'}}>
+                    <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
+                      {cp&&!hasActive&&<>
+                        <button onClick={()=>{setAlerts(p=>[{id:Date.now(),symbol:h.symbol,name:h.name,direction:'above',price:Math.round(cp*1.05*100)/100,currency:cur,triggered:false,triggeredAt:null,createdAt:Date.now()},...p]);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.success}40`,background:T.successBg,color:T.success,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.background=T.success+'30'} onMouseLeave={e=>e.currentTarget.style.background=T.successBg} title={`Alert above ${sym}${(cp*1.05).toFixed(0)} (+5%)`}>▲ +5%</button>
+                        <button onClick={()=>{setAlerts(p=>[{id:Date.now()+1,symbol:h.symbol,name:h.name,direction:'below',price:Math.round(cp*0.95*100)/100,currency:cur,triggered:false,triggeredAt:null,createdAt:Date.now()},...p]);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.danger}40`,background:T.dangerBg,color:T.danger,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.background=T.danger+'30'} onMouseLeave={e=>e.currentTarget.style.background=T.dangerBg} title={`Alert below ${sym}${(cp*0.95).toFixed(0)} (-5%)`}>▼ -5%</button>
+                        <button onClick={()=>{setShowAdd(true);setForm({symbol:h.symbol,name:h.name,direction:'above',price:'',currency:cur});setSrch(h.name);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.border2}`,background:'transparent',color:T.text3,cursor:'pointer',fontSize:10,fontWeight:600,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border2;e.currentTarget.style.color=T.text3;}}>Custom</button>
+                      </>}
+                      {hasActive&&<button onClick={()=>removeAlert(activeAlert.id)} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.danger}40`,background:'transparent',color:T.text3,cursor:'pointer',fontSize:10,fontWeight:600,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;}} title="Remove alert"><Ic.Trash/></button>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1522,7 +1377,7 @@ function AlertsModule({T,prices,holdings}) {
 // Fetches sector from Yahoo Finance v10 quoteSummary assetProfile
 // Storage: pm_sectors = { SYMBOL: { sector, industry } }
 
-function SectorModule({T,rows,prices}) {
+function SectorModule({T,rows,prices,usdInr}) {
   const [sectorMap,setSectorMap]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_sectors')||'{}');}catch{return {};}});
   const [loading,setLoading]=useState(false);
   const [manualEdit,setManualEdit]=useState(null);
@@ -1542,22 +1397,24 @@ function SectorModule({T,rows,prices}) {
     setLoading(false);
   };
 
-  // Group rows by sector
+  // Group rows by sector — all values in INR (USD converted via usdInr)
+  const toINR=(val,cur)=>cur==='USD'&&usdInr?val*usdInr:val;
   const grouped=useMemo(()=>{
     const map={};
     rows.forEach(r=>{
       const sec=sectorMap[r.symbol]?.sector||'Uncategorised';
       if(!map[sec])map[sec]={sector:sec,holdings:[],totalValue:0,totalInvested:0,totalGain:0};
-      const val=r.curValue??r.invested;
+      const cur=r.currency||'INR';
+      const val=toINR(r.curValue??r.invested,cur);
       map[sec].holdings.push(r);
       map[sec].totalValue+=val;
-      map[sec].totalInvested+=r.invested;
-      map[sec].totalGain+=(r.gain??0);
+      map[sec].totalInvested+=toINR(r.invested,cur);
+      map[sec].totalGain+=toINR(r.gain??0,cur);
     });
     return Object.values(map).sort((a,b)=>b.totalValue-a.totalValue);
-  },[rows,sectorMap]);
+  },[rows,sectorMap,usdInr]);
 
-  const totalValue=rows.reduce((s,r)=>s+(r.curValue??r.invested),0)||1;
+  const totalValue=rows.reduce((s,r)=>s+toINR(r.curValue??r.invested,r.currency||'INR'),0)||1;
 
   const SEC_COLORS=['#6366f1','#76b900','#00b4d8','#f59e0b','#ef4444','#a855f7','#06b6d4','#f97316','#10b981','#ec4899'];
 
@@ -1626,14 +1483,14 @@ function SectorModule({T,rows,prices}) {
                   {g.holdings.map(h=>(
                     <div key={h.symbol} style={{display:'flex',alignItems:'center',gap:5,background:T.surface3,borderRadius:6,padding:'3px 10px'}}>
                       <span style={{fontSize:11,fontWeight:600,color:T.text}}>{short(h.symbol)}</span>
-                      {!sectorMap[h.symbol]&&(
-                        manualEdit===h.symbol
+                      {manualEdit===h.symbol
                           ?<div style={{display:'flex',gap:4,alignItems:'center'}}>
-                            <input value={editVal} onChange={e=>setEditVal(e.target.value)} placeholder="Sector" style={{...INP,width:100,padding:'2px 6px'}} autoFocus/>
-                            <button onClick={()=>{setSectorMap(p=>({...p,[h.symbol]:{sector:editVal,industry:editVal}}));setManualEdit(null);}} style={{background:'none',border:'none',cursor:'pointer',color:T.success,padding:2}}><Ic.Check/></button>
+                            <input value={editVal} onChange={e=>setEditVal(e.target.value)} placeholder="Sector" style={{...INP,width:100,padding:'2px 6px'}} autoFocus onKeyDown={e=>{if(e.key==='Enter'&&editVal.trim()){setSectorMap(p=>({...p,[h.symbol]:{sector:editVal.trim(),industry:editVal.trim()}}));setManualEdit(null);}if(e.key==='Escape')setManualEdit(null);}}/>
+                            <button onClick={()=>{if(editVal.trim()){setSectorMap(p=>({...p,[h.symbol]:{sector:editVal.trim(),industry:editVal.trim()}}));setManualEdit(null);}}} style={{background:'none',border:'none',cursor:'pointer',color:T.success,padding:2}}><Ic.Check/></button>
+                            <button onClick={()=>setManualEdit(null)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:2}}><Ic.X/></button>
                           </div>
-                          :<button onClick={()=>{setManualEdit(h.symbol);setEditVal('');}} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:1,fontSize:10}} title="Set sector"><Ic.Pencil/></button>
-                      )}
+                          :<button onClick={()=>{setManualEdit(h.symbol);setEditVal(sectorMap[h.symbol]?.sector||'');}} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:1,fontSize:10}} title="Change sector"><Ic.Pencil/></button>
+                      }
                     </div>
                   ))}
                 </div>
@@ -1651,7 +1508,7 @@ function SectorModule({T,rows,prices}) {
 // ── MODULE: BENCHMARK COMPARISON ─────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function BenchmarkModule({T,rows,lots}) {
+function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
   const [benchData,setBenchData]=useState({});
   const [loading,setLoading]=useState(false);
   const [range,setRange]=useState('3mo');
@@ -1663,6 +1520,20 @@ function BenchmarkModule({T,rows,lots}) {
     {sym:'^NSEI',label:'Nifty 50',color:'#f59e0b'},
     {sym:'^GSPC',label:'S&P 500',color:'#00b4d8'},
   ];
+
+  // Compute portfolio returns for each market
+  const inReturn=useMemo(()=>{
+    if(!inRows?.length)return null;
+    const inv=inRows.reduce((s,r)=>s+r.invested,0);
+    const cur=inRows.reduce((s,r)=>s+(r.curValue??r.invested),0);
+    return inv?((cur-inv)/inv)*100:null;
+  },[inRows]);
+  const usReturn=useMemo(()=>{
+    if(!usRows?.length)return null;
+    const inv=usRows.reduce((s,r)=>s+r.invested,0);
+    const cur=usRows.reduce((s,r)=>s+(r.curValue??r.invested),0);
+    return inv?((cur-inv)/inv)*100:null;
+  },[usRows]);
 
   const fetchBench=useCallback(async()=>{
     setLoading(true);
@@ -1678,19 +1549,15 @@ function BenchmarkModule({T,rows,lots}) {
 
   useEffect(()=>{fetchBench();},[fetchBench]);
 
-  // Calculate portfolio return series from rows (simple: use current holdings)
-  const portfolioSeries=useMemo(()=>{
-    // Use longest available benchmark series as date axis
-    const dates=Object.values(benchData)[0]?.map(d=>d.date)||[];
-    if(!dates.length||!rows.length)return[];
-    // For each date, estimate portfolio value using current weights * day close
-    // This is approximate — for exact we'd need historical prices per holding
-    // Return a normalized series (100 = start)
-    return dates.map((date,i)=>{
-      const pct=Object.values(benchData).map(s=>{const pt=s[i];const p0=s[0];return pt&&p0?(pt.close/p0.close-1)*100:null;}).filter(Boolean);
-      return{date,pct:pct.length?null:null}; // portfolio pct calculated separately
-    });
-  },[benchData,rows]);
+  // Combined portfolio return (all holdings, USD converted to INR)
+  const portfolioReturn=useMemo(()=>{
+    if(!rows.length)return null;
+    const toINR=(v,cur)=>cur==='USD'&&usdInr?v*usdInr:v;
+    const totalInvested=rows.reduce((s,r)=>s+toINR(r.invested,r.currency||'INR'),0);
+    const totalCurrent=rows.reduce((s,r)=>s+toINR(r.curValue??r.invested,r.currency||'INR'),0);
+    if(!totalInvested)return null;
+    return((totalCurrent-totalInvested)/totalInvested)*100;
+  },[rows,usdInr]);
 
   // Normalize benchmark series to % return from start
   const normalized=useMemo(()=>{
@@ -1703,9 +1570,10 @@ function BenchmarkModule({T,rows,lots}) {
     return out;
   },[benchData]);
 
-  // SVG chart
+  // SVG chart — include portfolio returns in the Y-axis range
   const allSeries=Object.values(normalized);
-  const allPcts=allSeries.flatMap(s=>s.map(d=>d.pct)).filter(Boolean);
+  const extraPcts=[inReturn,usReturn].filter(v=>v!=null);
+  const allPcts=[...allSeries.flatMap(s=>s.map(d=>d.pct)).filter(Boolean),...extraPcts];
   const minP=Math.min(...allPcts,-5),maxP=Math.max(...allPcts,5);
   const range_=maxP-minP||10;
   const dates=allSeries[0]?.map(d=>d.date)||[];
@@ -1748,6 +1616,21 @@ function BenchmarkModule({T,rows,lots}) {
               const path=s.map((d,i)=>`${i===0?'M':'L'}${xOf(i).toFixed(1)},${yOf(d.pct).toFixed(1)}`).join(' ');
               return<path key={b.sym} d={path} fill="none" stroke={b.color} strokeWidth="2"/>;
             })}
+            {/* Portfolio return lines (dashed) */}
+            {inReturn!=null&&dates.length>0&&(
+              <g>
+                <line x1={PAD.l} y1={yOf(inReturn)} x2={PAD.l+W} y2={yOf(inReturn)} stroke="#ff9800" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.8"/>
+                <rect x={PAD.l+W-78} y={yOf(inReturn)-8} width={76} height={16} rx={3} fill="#ff9800" opacity="0.15"/>
+                <text x={PAD.l+W-4} y={yOf(inReturn)+4} fontSize={9} fill="#ff9800" fontFamily="inherit" textAnchor="end" fontWeight="700">🇮🇳 {inReturn>=0?'+':''}{inReturn.toFixed(1)}%</text>
+              </g>
+            )}
+            {usReturn!=null&&dates.length>0&&(
+              <g>
+                <line x1={PAD.l} y1={yOf(usReturn)} x2={PAD.l+W} y2={yOf(usReturn)} stroke="#00b4d8" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.8"/>
+                <rect x={PAD.l+4} y={yOf(usReturn)-8} width={76} height={16} rx={3} fill="#00b4d8" opacity="0.15"/>
+                <text x={PAD.l+8} y={yOf(usReturn)+4} fontSize={9} fill="#00b4d8" fontFamily="inherit" fontWeight="700">🇺🇸 {usReturn>=0?'+':''}{usReturn.toFixed(1)}%</text>
+              </g>
+            )}
             {/* X axis dates */}
             {dates.filter((_,i)=>i%Math.max(1,Math.floor(dates.length/6))===0).map((d,i)=>{
               const idx=dates.indexOf(d);
@@ -1757,9 +1640,11 @@ function BenchmarkModule({T,rows,lots}) {
             {hover!==null&&dates[hover]&&(
               <g>
                 <line x1={xOf(hover)} y1={PAD.t} x2={xOf(hover)} y2={PAD.t+H} stroke={T.border2} strokeWidth="0.8"/>
-                <rect x={Math.min(xOf(hover)+8,VW-130)} y={PAD.t+4} width={120} height={BENCHES.length*18+20} rx={4} fill={T.surface2} stroke={T.border2} strokeWidth="0.8"/>
+                <rect x={Math.min(xOf(hover)+8,VW-130)} y={PAD.t+4} width={135} height={(BENCHES.length+(inReturn!=null?1:0)+(usReturn!=null?1:0))*18+20} rx={4} fill={T.surface2} stroke={T.border2} strokeWidth="0.8"/>
                 <text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+16} fontSize={8} fill={T.text3} fontFamily="inherit">{new Date(dates[hover]).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</text>
                 {BENCHES.map((b,i)=>{const s=normalized[b.sym];const pt=s?.[hover];return pt?<text key={b.sym} x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+i*18} fontSize={10} fill={b.color} fontFamily="inherit" fontWeight="700">{b.label}: {pt.pct>=0?'+':''}{pt.pct.toFixed(2)}%</text>:null;})}
+                {inReturn!=null&&<text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+BENCHES.length*18} fontSize={10} fill="#ff9800" fontFamily="inherit" fontWeight="700">🇮🇳 Portfolio: {inReturn>=0?'+':''}{inReturn.toFixed(2)}%</text>}
+                {usReturn!=null&&<text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+(BENCHES.length+(inReturn!=null?1:0))*18} fontSize={10} fill="#00b4d8" fontFamily="inherit" fontWeight="700">🇺🇸 Portfolio: {usReturn>=0?'+':''}{usReturn.toFixed(2)}%</text>}
               </g>
             )}
           </svg>
@@ -1773,6 +1658,20 @@ function BenchmarkModule({T,rows,lots}) {
               {last!=null&&<span style={{fontSize:12,fontWeight:700,color:last>=0?T.success:T.danger}}>{last>=0?'+':''}{last.toFixed(2)}%</span>}
             </div>
           );})}
+          {inReturn!=null&&(
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <div style={{width:20,height:2,background:'#ff9800',borderRadius:1,opacity:.5}}/>
+              <span style={{fontSize:12,color:T.text2}}>🇮🇳 Portfolio</span>
+              <span style={{fontSize:12,fontWeight:700,color:inReturn>=0?T.success:T.danger}}>{inReturn>=0?'+':''}{inReturn.toFixed(2)}%</span>
+            </div>
+          )}
+          {usReturn!=null&&(
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <div style={{width:20,height:2,background:'#00b4d8',borderRadius:1,opacity:.5}}/>
+              <span style={{fontSize:12,color:T.text2}}>🇺🇸 Portfolio</span>
+              <span style={{fontSize:12,fontWeight:700,color:usReturn>=0?T.success:T.danger}}>{usReturn>=0?'+':''}{usReturn.toFixed(2)}%</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1784,7 +1683,28 @@ function BenchmarkModule({T,rows,lots}) {
           </div>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
             <thead><tr style={{background:T.surface3}}>{['Index','Start','Current','Return','High','Low'].map(h=><th key={h} style={{padding:'10px 14px',textAlign:'left',color:T.text3,fontWeight:700,fontSize:11,borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
-            <tbody>{BENCHES.map((b,i)=>{
+            <tbody>
+              {inReturn!=null&&(
+                <tr style={{background:'rgba(255,152,0,.08)'}}>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`}}><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:12}}>🇮🇳</span><span style={{fontWeight:700,color:T.inColor}}>Indian Portfolio</span></div></td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text2}}>₹{inRows.reduce((s,r)=>s+r.invested,0).toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.cyan,fontWeight:700}}>₹{inRows.reduce((s,r)=>s+(r.curValue??r.invested),0).toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontWeight:700,color:inReturn>=0?T.success:T.danger}}>{inReturn>=0?'+':''}{inReturn.toFixed(2)}%</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text3}}>vs Nifty 50</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text3}}>{(()=>{const s=normalized['^NSEI'];return s?`${s[s.length-1]?.pct>=0?'+':''}${s[s.length-1]?.pct?.toFixed(2)}%`:'—';})()}</td>
+                </tr>
+              )}
+              {usReturn!=null&&(
+                <tr style={{background:'rgba(0,180,216,.08)'}}>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`}}><div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:12}}>🇺🇸</span><span style={{fontWeight:700,color:T.usColor}}>US Portfolio</span></div></td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text2}}>${usRows.reduce((s,r)=>s+r.invested,0).toLocaleString('en-US',{maximumFractionDigits:0})}</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.cyan,fontWeight:700}}>${usRows.reduce((s,r)=>s+(r.curValue??r.invested),0).toLocaleString('en-US',{maximumFractionDigits:0})}</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontWeight:700,color:usReturn>=0?T.success:T.danger}}>{usReturn>=0?'+':''}{usReturn.toFixed(2)}%</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text3}}>vs S&P 500</td>
+                  <td style={{padding:'10px 14px',borderBottom:`1px solid ${T.border}`,color:T.text3}}>{(()=>{const s=normalized['^GSPC'];return s?`${s[s.length-1]?.pct>=0?'+':''}${s[s.length-1]?.pct?.toFixed(2)}%`:'—';})()}</td>
+                </tr>
+              )}
+              {BENCHES.map((b,i)=>{
               const s=normalized[b.sym];const raw=benchData[b.sym];if(!s||!raw)return null;
               const ret=s[s.length-1]?.pct??0;const hi=Math.max(...s.map(d=>d.pct));const lo=Math.min(...s.map(d=>d.pct));
               return(
@@ -1799,6 +1719,266 @@ function BenchmarkModule({T,rows,lots}) {
               );
             })}</tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: SCREENER ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fetches key fundamentals from Yahoo v10 quoteSummary for all portfolio stocks.
+// Links to Screener.in (Indian) and Yahoo Finance (US).
+
+function ScreenerModule({T,holdings,prices}) {
+  const [data,setData]=useState({});
+  const [loading,setLoading]=useState(false);
+  const [sort,setSort]=useState({col:'symbol',dir:'asc'});
+  const [filter,setFilter]=useState('all'); // all | IN | US
+
+  const fetchAll=useCallback(async()=>{
+    if(!holdings.length)return;
+    setLoading(true);
+    const out={};
+    await Promise.all(holdings.map(async h=>{
+      try{
+        const r=await fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(h.symbol)}?modules=summaryDetail,defaultKeyStatistics,financialData,price`,{headers:{Accept:'application/json'}});
+        if(!r.ok)return;
+        const j=await r.json();const res=j?.quoteSummary?.result?.[0];if(!res)return;
+        const sd=res.summaryDetail||{},ks=res.defaultKeyStatistics||{},fd=res.financialData||{},pr=res.price||{};
+        out[h.symbol]={
+          name:h.name,symbol:h.symbol,isUS:isUS(h.symbol),
+          currency:pr.currency||'INR',
+          marketCap:pr.marketCap?.raw||sd.marketCap?.raw||null,
+          pe:sd.trailingPE?.raw||ks.trailingPE?.raw||null,
+          forwardPE:sd.forwardPE?.raw||ks.forwardPE?.raw||null,
+          pb:ks.priceToBook?.raw||null,
+          eps:ks.trailingEps?.raw||fd.trailingEps?.raw||null,
+          divYield:(sd.dividendYield?.raw||0)*100,
+          roe:fd.returnOnEquity?.raw!=null?(fd.returnOnEquity.raw*100):null,
+          debtToEquity:fd.debtToEquity?.raw||null,
+          fiftyTwoWeekHigh:sd.fiftyTwoWeekHigh?.raw||null,
+          fiftyTwoWeekLow:sd.fiftyTwoWeekLow?.raw||null,
+          beta:sd.beta?.raw||ks.beta?.raw||null,
+          curPrice:prices[h.symbol]?.current||null,
+          revenueGrowth:fd.revenueGrowth?.raw!=null?(fd.revenueGrowth.raw*100):null,
+          profitMargin:fd.profitMargins?.raw!=null?(fd.profitMargins.raw*100):null,
+          targetMean:fd.targetMeanPrice?.raw||null,
+          recommendation:fd.recommendationKey||null,
+        };
+      }catch{}
+    }));
+    setData(out);setLoading(false);
+  },[holdings,prices]);
+
+  useEffect(()=>{fetchAll();},[]);
+
+  const rows=useMemo(()=>{
+    let arr=Object.values(data);
+    if(filter==='IN')arr=arr.filter(r=>!r.isUS);
+    if(filter==='US')arr=arr.filter(r=>r.isUS);
+    return sortRows(arr,sort.col,sort.dir);
+  },[data,filter,sort]);
+
+  const onSort=col=>setSort(p=>({col,dir:p.col===col&&p.dir==='asc'?'desc':'asc'}));
+  const thS={padding:'8px 10px',fontSize:11,fontWeight:700,color:T.text3,cursor:'pointer',whiteSpace:'nowrap',borderBottom:`1px solid ${T.border}`,background:T.surface2,textAlign:'right',userSelect:'none'};
+  const tdS={padding:'8px 10px',fontSize:12,borderBottom:`1px solid ${T.border}`,textAlign:'right',color:T.text2};
+  const arrow=col=>sort.col===col?(sort.dir==='asc'?' ▲':' ▼'):'';
+
+  const screenerLink=r=>r.isUS
+    ?`https://finance.yahoo.com/quote/${encodeURIComponent(r.symbol)}/`
+    :`https://www.screener.in/company/${short(r.symbol)}/consolidated/`;
+
+  const fmtMC=r=>{
+    const v=r.marketCap;if(!v)return'—';
+    if(r.isUS){
+      if(v>=1e12)return`$${(v/1e12).toFixed(2)}T`;
+      if(v>=1e9)return`$${(v/1e9).toFixed(1)}B`;
+      return`$${(v/1e6).toFixed(0)}M`;
+    }
+    if(v>=1e12)return`₹${(v/1e12).toFixed(2)}T`;
+    if(v>=1e7)return`₹${(v/1e7).toFixed(0)}Cr`;
+    return`₹${(v/1e5).toFixed(0)}L`;
+  };
+
+  const fmtN=(v,d=2)=>v==null?'—':v.toFixed(d);
+  const fmtP=(v)=>v==null?'—':`${v.toFixed(1)}%`;
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Screener</div>
+          <div style={{fontSize:13,color:T.text3}}>Fundamentals for {holdings.length} holdings · Click any stock to open on {filter==='US'?'Yahoo Finance':'Screener.in'}</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {['all','IN','US'].map(f=>(
+            <button key={f} onClick={()=>setFilter(f)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${filter===f?T.accent:T.border2}`,background:filter===f?T.accentBg:'transparent',color:filter===f?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:filter===f?700:400}}>{f==='all'?'All':f==='IN'?'🇮🇳 Indian':'🇺🇸 US'}</button>
+          ))}
+          <NvBtn onClick={fetchAll} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+        </div>
+      </div>
+
+      <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+        {loading&&!rows.length?<div style={{padding:40,textAlign:'center',color:T.text3}}>Fetching fundamentals…</div>:(
+        <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+            <thead><tr>
+              <th onClick={()=>onSort('symbol')} style={{...thS,textAlign:'left',position:'sticky',left:0,zIndex:1,background:T.surface2,minWidth:130}}>Stock{arrow('symbol')}</th>
+              <th onClick={()=>onSort('marketCap')} style={thS}>Mkt Cap{arrow('marketCap')}</th>
+              <th onClick={()=>onSort('pe')} style={thS}>PE{arrow('pe')}</th>
+              <th onClick={()=>onSort('forwardPE')} style={thS}>Fwd PE{arrow('forwardPE')}</th>
+              <th onClick={()=>onSort('pb')} style={thS}>PB{arrow('pb')}</th>
+              <th onClick={()=>onSort('eps')} style={thS}>EPS{arrow('eps')}</th>
+              <th onClick={()=>onSort('roe')} style={thS}>ROE{arrow('roe')}</th>
+              <th onClick={()=>onSort('debtToEquity')} style={thS}>D/E{arrow('debtToEquity')}</th>
+              <th onClick={()=>onSort('divYield')} style={thS}>Div %{arrow('divYield')}</th>
+              <th onClick={()=>onSort('profitMargin')} style={thS}>Margin{arrow('profitMargin')}</th>
+              <th onClick={()=>onSort('revenueGrowth')} style={thS}>Rev Gr{arrow('revenueGrowth')}</th>
+              <th onClick={()=>onSort('beta')} style={thS}>Beta{arrow('beta')}</th>
+              <th onClick={()=>onSort('fiftyTwoWeekLow')} style={thS}>52W Low{arrow('fiftyTwoWeekLow')}</th>
+              <th onClick={()=>onSort('fiftyTwoWeekHigh')} style={thS}>52W High{arrow('fiftyTwoWeekHigh')}</th>
+              <th onClick={()=>onSort('recommendation')} style={thS}>Rating{arrow('recommendation')}</th>
+            </tr></thead>
+            <tbody>
+              {!rows.length&&<tr><td colSpan={15} style={{padding:32,textAlign:'center',color:T.text3}}>No data. Click refresh to load fundamentals.</td></tr>}
+              {rows.map((r,i)=>{
+                const cur=r.curPrice;const hi=r.fiftyTwoWeekHigh;const lo=r.fiftyTwoWeekLow;
+                const fromHi=cur&&hi?((cur-hi)/hi*100):null;
+                const fromLo=cur&&lo?((cur-lo)/lo*100):null;
+                const ratingColor={buy:T.success,strong_buy:T.success,hold:T.warning,sell:T.danger,strong_sell:T.danger,underperform:T.danger,outperform:T.success}[r.recommendation]||T.text3;
+                return(
+                <tr key={r.symbol} style={{background:i%2===0?'transparent':T.surface3,cursor:'pointer',transition:'background .08s'}} onClick={()=>window.open(screenerLink(r),'_blank')} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'transparent':T.surface3}>
+                  <td style={{...tdS,textAlign:'left',position:'sticky',left:0,background:'inherit',zIndex:1,borderRight:`1px solid ${T.border}`}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:28,height:28,borderRadius:6,background:r.isUS?'rgba(0,180,216,.12)':'rgba(255,152,0,.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:r.isUS?T.usColor:T.inColor,flexShrink:0}}>{short(r.symbol).slice(0,2)}</div>
+                      <div><div style={{fontWeight:700,color:T.text,fontSize:12}}>{short(r.symbol)}</div><div style={{fontSize:10,color:T.text3,maxWidth:90,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}</div></div>
+                    </div>
+                  </td>
+                  <td style={tdS}><span style={{color:T.text,fontWeight:600}}>{fmtMC(r)}</span></td>
+                  <td style={{...tdS,color:r.pe!=null&&r.pe<25?T.success:r.pe!=null&&r.pe>40?T.danger:T.text2}}>{fmtN(r.pe,1)}</td>
+                  <td style={tdS}>{fmtN(r.forwardPE,1)}</td>
+                  <td style={{...tdS,color:r.pb!=null&&r.pb<3?T.success:r.pb!=null&&r.pb>10?T.danger:T.text2}}>{fmtN(r.pb,1)}</td>
+                  <td style={tdS}>{fmtN(r.eps,1)}</td>
+                  <td style={{...tdS,color:r.roe!=null&&r.roe>15?T.success:r.roe!=null&&r.roe<10?T.danger:T.text2}}>{fmtP(r.roe)}</td>
+                  <td style={{...tdS,color:r.debtToEquity!=null&&r.debtToEquity>100?T.danger:T.text2}}>{fmtN(r.debtToEquity,0)}</td>
+                  <td style={{...tdS,color:r.divYield>2?T.success:T.text2}}>{fmtP(r.divYield)}</td>
+                  <td style={{...tdS,color:r.profitMargin!=null&&r.profitMargin>15?T.success:T.text2}}>{fmtP(r.profitMargin)}</td>
+                  <td style={{...tdS,color:r.revenueGrowth!=null&&r.revenueGrowth>10?T.success:r.revenueGrowth!=null&&r.revenueGrowth<0?T.danger:T.text2}}>{fmtP(r.revenueGrowth)}</td>
+                  <td style={tdS}>{fmtN(r.beta,2)}</td>
+                  <td style={tdS}><div>{r.isUS?'$':'\u20b9'}{fmtN(r.fiftyTwoWeekLow,0)}</div>{fromLo!=null&&<div style={{fontSize:9,color:T.success}}>+{fromLo.toFixed(0)}%</div>}</td>
+                  <td style={tdS}><div>{r.isUS?'$':'\u20b9'}{fmtN(r.fiftyTwoWeekHigh,0)}</div>{fromHi!=null&&<div style={{fontSize:9,color:T.danger}}>{fromHi.toFixed(0)}%</div>}</td>
+                  <td style={{...tdS,fontWeight:700,color:ratingColor,textTransform:'uppercase',fontSize:10}}>{r.recommendation||'—'}</td>
+                </tr>
+              );})}
+            </tbody>
+          </table>
+        </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MODULE: NEWS FEED ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fetches latest news from Yahoo Finance for portfolio stocks + market indices.
+
+function NewsModule({T,holdings}) {
+  const [news,setNews]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [filter,setFilter]=useState('all'); // all | portfolio | market
+  const [expandedId,setExpandedId]=useState(null);
+
+  const fetchNews=useCallback(async()=>{
+    setLoading(true);
+    const allNews=[];
+    const seen=new Set();
+
+    // Fetch news for portfolio stocks (batch in groups to avoid rate limits)
+    const symbols=[...holdings.map(h=>h.symbol),'NIFTY','S&P 500','Indian economy','US markets'].slice(0,12);
+    await Promise.all(symbols.map(async (sym,idx)=>{
+      try{
+        await new Promise(r=>setTimeout(r,idx*100)); // stagger requests
+        const q=sym.includes(' ')?sym:short(sym);
+        const host=idx%2===0?'query1':'query2';
+        const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=0&newsCount=6&lang=en-US`,{headers:{Accept:'application/json'}});
+        if(!r.ok)return;
+        const j=await r.json();
+        const items=(j?.news||[]).filter(n=>n.title&&n.link).map(n=>({
+          id:n.uuid||n.link,
+          title:n.title,
+          link:n.link,
+          publisher:n.publisher||'',
+          publishedAt:n.providerPublishTime?n.providerPublishTime*1000:null,
+          thumbnail:n.thumbnail?.resolutions?.[0]?.url||null,
+          relatedSymbol:sym.includes(' ')?null:sym,
+          isMarket:sym.includes(' '),
+          snippet:n.title,
+        }));
+        items.forEach(n=>{if(!seen.has(n.id)){seen.add(n.id);allNews.push(n);}});
+      }catch{}
+    }));
+
+    // Sort by publish time (newest first)
+    allNews.sort((a,b)=>(b.publishedAt||0)-(a.publishedAt||0));
+    setNews(allNews);setLoading(false);
+  },[holdings]);
+
+  useEffect(()=>{fetchNews();},[]);
+
+  const filtered=useMemo(()=>{
+    if(filter==='portfolio')return news.filter(n=>!n.isMarket);
+    if(filter==='market')return news.filter(n=>n.isMarket);
+    return news;
+  },[news,filter]);
+
+  const timeAgo=ts=>{
+    if(!ts)return'';
+    const diff=Date.now()-ts;
+    const mins=Math.floor(diff/60000);
+    if(mins<60)return`${mins}m ago`;
+    const hrs=Math.floor(mins/60);
+    if(hrs<24)return`${hrs}h ago`;
+    const days=Math.floor(hrs/24);
+    return`${days}d ago`;
+  };
+
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>News Feed</div>
+          <div style={{fontSize:13,color:T.text3}}>{filtered.length} articles · Portfolio stocks + market news</div>
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {[['all','All'],['portfolio','Portfolio'],['market','Market']].map(([k,l])=>(
+            <button key={k} onClick={()=>setFilter(k)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${filter===k?T.accent:T.border2}`,background:filter===k?T.accentBg:'transparent',color:filter===k?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:filter===k?700:400}}>{l}</button>
+          ))}
+          <NvBtn onClick={fetchNews} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+        </div>
+      </div>
+
+      {loading&&!news.length?<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>Fetching latest news…</div>:(
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {!filtered.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No news found. Try refreshing.</div>}
+          {filtered.map(n=>(
+            <a key={n.id} href={n.link} target="_blank" rel="noopener noreferrer" style={{textDecoration:'none',background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:'14px 16px',display:'flex',gap:14,alignItems:'flex-start',cursor:'pointer',transition:'all .12s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=T.surface3;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=T.surface2;}}>
+              {n.thumbnail&&<img src={n.thumbnail} alt="" style={{width:80,height:56,objectFit:'cover',borderRadius:6,flexShrink:0,background:T.surface4}} onError={e=>{e.target.style.display='none';}}/>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.4,marginBottom:4}}>{n.title}</div>
+                <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+                  {n.relatedSymbol&&<span style={{padding:'2px 8px',borderRadius:4,background:isUS(n.relatedSymbol)?'rgba(0,180,216,.12)':'rgba(255,152,0,.12)',color:isUS(n.relatedSymbol)?T.usColor:T.inColor,fontSize:10,fontWeight:700}}>{short(n.relatedSymbol)}</span>}
+                  {n.publisher&&<span style={{fontSize:11,color:T.text3}}>{n.publisher}</span>}
+                  {n.publishedAt&&<span style={{fontSize:11,color:T.text3}}>{timeAgo(n.publishedAt)}</span>}
+                </div>
+              </div>
+            </a>
+          ))}
         </div>
       )}
     </div>
@@ -1921,12 +2101,8 @@ function WatchlistModule({T,usdInr}) {
   const [wLoading,setWLoading]=useState(false);
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({symbol:'',name:'',targetEntry:'',targetExit:'',notes:''});
-  const [srch,setSrch]=useState('');
-  const [results,setResults]=useState([]);
-  const [focused,setFocused]=useState(false);
-  const [busyS,setBusyS]=useState(false);
+  const {srch,setSrch,results,setResults,focused,setFocused,busyS,doSearch,clearSearch}=useYahooSearch();
   const [editId,setEditId]=useState(null);
-  const timer=useRef(null);
 
   useEffect(()=>{localStorage.setItem('pm_watchlist',JSON.stringify(items));},[items]);
 
@@ -1948,18 +2124,7 @@ function WatchlistModule({T,usdInr}) {
 
   useEffect(()=>{fetchWPrices();},[fetchWPrices]);
 
-  const doSearch=q=>{
-    setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
-    timer.current=setTimeout(async()=>{
-      setBusyS(true);
-      try{
-        for(const host of ['query1','query2']){
-          const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});
-          if(r.ok){const j=await r.json();const q2=(j?.quotes??[]).filter(x=>x.symbol&&x.quoteType!=='OPTION').slice(0,7);if(q2.length){setResults(q2);break;}}
-        }
-      }catch{}setBusyS(false);
-    },400);
-  };
+  // doSearch: provided by useYahooSearch hook
 
   const addItem=()=>{
     const sym=form.symbol.trim().toUpperCase();if(!sym)return;
@@ -2110,27 +2275,12 @@ function LotsModule({T,prices}) {
   const [lots,setLots]=useState(()=>{try{return JSON.parse(localStorage.getItem('pm_lots')||'[]');}catch{return [];}});
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({symbol:'',name:'',qty:'',buyPrice:'',buyDate:new Date().toISOString().slice(0,10),currency:'INR',notes:''});
-  const [srch,setSrch]=useState('');
-  const [results,setResults]=useState([]);
-  const [focused,setFocused]=useState(false);
-  const [busyS,setBusyS]=useState(false);
+  const {srch,setSrch,results,setResults,focused,setFocused,busyS,doSearch,clearSearch}=useYahooSearch();
   const [filter,setFilter]=useState('');
-  const timer=useRef(null);
 
   useEffect(()=>{localStorage.setItem('pm_lots',JSON.stringify(lots));},[lots]);
 
-  const doSearch=q=>{
-    setSrch(q);clearTimeout(timer.current);if(!q.trim()){setResults([]);return;}
-    timer.current=setTimeout(async()=>{
-      setBusyS(true);
-      try{
-        for(const host of ['query1','query2']){
-          const r=await fetch(`https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`,{headers:{Accept:'application/json'}});
-          if(r.ok){const j=await r.json();const q2=(j?.quotes??[]).filter(x=>x.symbol&&x.quoteType!=='OPTION').slice(0,7);if(q2.length){setResults(q2);break;}}
-        }
-      }catch{}setBusyS(false);
-    },400);
-  };
+  // doSearch: provided by useYahooSearch hook
 
   const addLot=()=>{
     const sym=form.symbol.trim().toUpperCase();
@@ -2475,6 +2625,8 @@ function AppInner() {
   const [portfolios,setPortfolios]=useState(()=>{try{const s=localStorage.getItem('pm_portfolios');return s?JSON.parse(s):DEF_PF;}catch{return DEF_PF;}});
   const [activeId,setActiveId]=useState(()=>{try{const s=localStorage.getItem('pm_activeId');return s?JSON.parse(s):1;}catch{return 1;}});
   const [prices,setPrices]=useState({});
+  const pricesRef=useRef({});
+  useEffect(()=>{pricesRef.current=prices;},[prices]);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
   const [lastUpdated,setLastUpdated]=useState(null);
@@ -2533,20 +2685,22 @@ function AppInner() {
   const fetchPrices=useCallback(async()=>{
     if(!holdings.length)return;setLoading(true);setError(null);const out={};
     await Promise.all(holdings.map(async h=>{try{const res=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(h.symbol)}?interval=1d&range=1d`,{headers:{Accept:'application/json'}});if(!res.ok)throw new Error();const json=await res.json();const meta=json?.chart?.result?.[0]?.meta;if(meta?.regularMarketPrice){out[h.symbol]={current:meta.regularMarketPrice,prev:meta.chartPreviousClose??meta.regularMarketPrice,currency:meta.currency??(isUS(h.symbol)?'USD':'INR')};}else out[h.symbol]=null;}catch{out[h.symbol]=null;}}));
-    // Only update entries that returned data; preserve last-known for failures
-    const merged={...prices};
-    let anyNew=false;
-    for(const [sym,val] of Object.entries(out)){
-      if(val){merged[sym]=val;anyNew=true;}
-      // if null, keep merged[sym] as-is (last-known price)
-    }
-    if(!anyNew&&holdings.length){
-      setError('Live prices unavailable — showing last known prices.');
-    } else {
-      setError(null);
-    }
-    setPrices({...merged});setLastUpdated(new Date());setLoading(false);
-  },[holdings,prices]);
+    // FIX #1: Use pricesRef to avoid stale closure / infinite re-render loop
+    setPrices(prev=>{
+      const merged={...prev};
+      let anyNew=false;
+      for(const [sym,val] of Object.entries(out)){
+        if(val){merged[sym]=val;anyNew=true;}
+      }
+      if(!anyNew&&holdings.length){
+        setError('Live prices unavailable — showing last known prices.');
+      } else {
+        setError(null);
+      }
+      return merged;
+    });
+    setLastUpdated(new Date());setLoading(false);
+  },[holdings]); // FIX #1: removed 'prices' from deps — uses functional setPrices instead
   useEffect(()=>{
     fetchPrices();
     const ms=(tweaks.autoRefreshMins||5)*60*1000;
@@ -2683,11 +2837,10 @@ Respond ONLY as a JSON object with these keys:
   const totalIN=inRows.reduce((s,r)=>s+(r.curValue??r.invested),0),totalUS=usRows.reduce((s,r)=>s+(r.curValue??r.invested),0);
   const invIN=inRows.reduce((s,r)=>s+r.invested,0),invUS=usRows.reduce((s,r)=>s+r.invested,0);
   const activeStock=mainTab.startsWith('stock:')?mainTab.slice(6):null;
-  const sharedProps={fetchPrices,loading,error,lastUpdated,targets,onSaveTarget:saveTarget,onSaveUnpledged:saveUnpledgedQty,onRemove:removeHolding,compact:tweaks.compactRows,addHolding,T};
+  const sharedProps={fetchPrices,loading,error,lastUpdated,onSaveUnpledged:saveUnpledgedQty,onRemove:removeHolding,compact:tweaks.compactRows,addHolding,T};
 
-  // Sidebar content for IN/US views
+  // FIX #6: SidebarContent extracted — receives T, targets, activePf, tweaks as props
   const SidebarContent=({sRows,pie,currency,usdInr,invAmt,totalAmt,gain,dayGain,offset})=>{
-    const tRows=sRows.filter(r=>targets[r.id]!=null&&r.curPrice!=null);
     return(
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
         {/* Portfolio summary */}
@@ -2724,22 +2877,6 @@ Respond ONLY as a JSON object with these keys:
         )}
         {pie.length>0&&<DonutChart T={T} title="Allocation" data={pie} currency={currency} offset={offset}/>}
         {tweaks.showCharts&&sRows.length>0&&<PLBarChart rows={sRows} currency={currency} T={T}/>}
-        {tRows.length>0&&(
-          <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-            <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:13,fontWeight:700,color:T.text}}>Targets</span>
-              <span style={{fontSize:11,color:T.text3,background:T.surface3,padding:'2px 8px',borderRadius:10,fontWeight:600}}>{tRows.length}</span>
-            </div>
-            <div style={{padding:'4px 16px 12px'}}>
-              {tRows.sort((a,b)=>((targets[b.id]-b.curPrice)/b.curPrice)-((targets[a.id]-a.curPrice)/a.curPrice)).map(r=>{const tgt=targets[r.id],up=((tgt-r.curPrice)/r.curPrice)*100,col=up>=20?T.success:up>=0?'#8fd000':up>=-10?T.warning:T.danger;return(
-                <div key={r.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:`1px solid ${T.border}`,fontSize:12}}>
-                  <div><div style={{fontWeight:700,color:T.text}}>{short(r.symbol)}</div><div style={{fontSize:10,color:T.text3,marginTop:1}}>{fmt(r.curPrice,r.currency)} → {fmt(tgt,r.currency)}</div></div>
-                  <span style={{padding:'2px 8px',borderRadius:4,background:up>=0?T.successBg:T.dangerBg,color:col,fontWeight:700,fontSize:11}}>{up>=0?'▲':'▼'} {Math.abs(up).toFixed(1)}%</span>
-                </div>
-              );})}
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -2756,6 +2893,8 @@ Respond ONLY as a JSON object with these keys:
     {id:'notes',     label:'Notes',    icon:'📝', color:'#10b981'},
     {id:'alerts',    label:'Alerts',   icon:'🔔', color:'#ef4444'},
     {id:'sectors',   label:'Sectors',  icon:'🏭', color:'#6366f1'},
+    {id:'screener',  label:'Screener', icon:'🔍', color:'#14b8a6'},
+    {id:'news',      label:'News',     icon:'📰', color:'#8b5cf6'},
     {id:'benchmark', label:'Benchmark',icon:'📊', color:'#00b4d8'},
     {id:'history',   label:'History',  icon:'📈', color:'#f97316'},
   ];
@@ -2782,7 +2921,7 @@ Respond ONLY as a JSON object with these keys:
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.4</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.5.1</div>
           </div>
         </div>
 
@@ -2811,7 +2950,7 @@ Respond ONLY as a JSON object with these keys:
         {/* Controls */}
         <div style={{display:'flex',gap:6,alignItems:'center',WebkitAppRegion:'no-drag'}}>
           {updateAvail&&<NvBtn onClick={()=>window.electronAPI?.installUpdate()} variant="primary" T={T}><Ic.Update/> Update Ready</NvBtn>}
-          <button onClick={()=>onUpdate('darkMode',!tweaks.darkMode)} style={{padding:'7px 8px',borderRadius:6,border:`1px solid ${T.border}`,background:'transparent',color:T.text3,cursor:'pointer',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}} onClick={()=>setTweaks(p=>({...p,darkMode:!p.darkMode}))}>
+          <button onClick={()=>setTweaks(p=>({...p,darkMode:!p.darkMode}))} style={{padding:'7px 8px',borderRadius:6,border:`1px solid ${T.border}`,background:'transparent',color:T.text3,cursor:'pointer',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}>
             {tweaks.darkMode?<Ic.Sun/>:<Ic.Moon/>}
           </button>
           <button onClick={()=>setShowSettings(v=>!v)} style={{padding:'7px 8px',borderRadius:6,border:`1px solid ${showSettings?T.accent:T.border}`,background:showSettings?T.accentBg:'transparent',color:showSettings?T.accent:T.text3,cursor:'pointer',display:'flex',transition:'all .1s'}}>
@@ -2878,8 +3017,10 @@ Respond ONLY as a JSON object with these keys:
           {activeModule==='tax'&&<TaxModule T={T} prices={prices}/>}
           {activeModule==='notes'&&<NotesModule T={T} holdings={holdings}/>}
           {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={holdings}/>}
-          {activeModule==='sectors'&&<SectorModule T={T} rows={rows} prices={prices}/>}
-          {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} lots={[]}/>}
+          {activeModule==='sectors'&&<SectorModule T={T} rows={rows} prices={prices} usdInr={usdInr}/>}
+          {activeModule==='screener'&&<ScreenerModule T={T} holdings={holdings} prices={prices}/>}
+          {activeModule==='news'&&<NewsModule T={T} holdings={holdings}/>}
+          {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr}/>}
           {activeModule==='history'&&<HistoryModule T={T} rows={rows}/>}
           {!activeModule&&activeStock?(
             <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
