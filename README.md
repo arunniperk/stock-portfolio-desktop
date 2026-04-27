@@ -151,10 +151,3 @@ git push
 git tag v4.5.2
 git push origin v4.5.2
 ```
-
----
-
-## 💡 Tax Notes (India — Equity)
-- **STCG** (Short Term Capital Gains) — Held < 12 months → 15% flat
-- **LTCG** (Long Term Capital Gains) — Held ≥ 12 months → 10% above ₹1L exemption
-- Tax estimates are indicative only — consult a CA for ITR filing
