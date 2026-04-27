@@ -13,4 +13,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Listeners pushed from main process
   onUpdateAvailable: (cb) => ipcRenderer.on('update-available',  () => cb()),
   onUpdateDownloaded:(cb) => ipcRenderer.on('update-downloaded', () => cb()),
+
+  // File-based storage (reads/writes Documents\Portfolio\<key>.json)
+  storageRead:  (key)        => ipcRenderer.invoke('storage-read',  key),
+  storageWrite: (key, value) => ipcRenderer.invoke('storage-write', key, value),
+
+  // Graceful-close handshake
+  // main → renderer: "please flush your storage now"
+  onAppClosing:  (cb) => ipcRenderer.on('app-closing', () => cb()),
+  // renderer → main: "all writes are done, safe to quit"
+  flushComplete: ()   => ipcRenderer.send('flush-complete'),
 });
+

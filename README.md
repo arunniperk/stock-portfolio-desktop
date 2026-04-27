@@ -1,6 +1,6 @@
 # Stock Portfolio Monitor
 
-A high-performance **Windows 11 desktop application** for managing personal stock portfolios across Indian and US markets. Built with **React 18 + Vite + Electron** — NVIDIA-style dark UI, dual AI analysis, real-time Yahoo Finance data, tax planning, sector analysis, benchmark comparison, screener, news feed, and full financial toolset.
+A high-performance **Windows 11 desktop application** for managing personal stock portfolios across Indian and US markets. Built with **React 18 + Vite + Electron** — NVIDIA-style dark UI, dual AI analysis, real-time Yahoo Finance data, sector analysis, benchmark comparison, news feed, and full financial toolset.
 
 ---
 
@@ -13,6 +13,7 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 - **USD/INR live rate** — All US P&L shown in USD + INR equivalent
 - **CSV & XLSX export** — Full metrics in both formats
 - **CSV import** — Drag-and-drop with column auto-detection
+- **Collapsible UI** — Hide left/right sidebars for maximum focus on your portfolio grid
 
 ### Stock Detail Tab
 - **Click any stock** to open a dedicated analysis tab
@@ -35,15 +36,12 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 | Tool | Description |
 |---|---|
 | 👁 **Watchlist** | Track stocks with target entry/exit prices. Highlights near-entry (amber) and target-hit (green). Notes field. CSV export. |
-| 📋 **Buy Lots** | Record individual buy transactions. Weighted avg price per stock. Per-lot P&L. STCG/LTCG badge. Shared with Tax module. |
-| 🧾 **Tax P&L** | FY 2025-26 STCG/LTCG computation. Record sales, view realized vs unrealized liability. ITR-ready CSV export. |
 | 📝 **Notes** | Per-stock notes/rationale. Card view of all annotated stocks. Edit in-place. |
-| 🔔 **Price Alerts** | Set above/below thresholds per stock. Quick-pick from portfolio stocks. Browser notifications on trigger. Active + triggered log. |
-| 🏭 **Sectors** | Group holdings by sector. All values unified in INR. Interactive donut chart. Fetches sector from Yahoo Finance. Always editable. |
-| 🔍 **Screener** | Fundamental analysis for all portfolio stocks — PE, Forward PE, PB, EPS, ROE, D/E, Div Yield, Profit Margin, Revenue Growth, Beta, 52W H/L, Analyst Rating. Sortable columns. Filter by IN/US. Click to open Screener.in or Yahoo Finance. |
+| 🔔 **Price Alerts** | Set dual price targets (**Target 1** & **Target 2**) per stock. Sequential hit tracking. Inline editing to reset targets after they are met. Browser notifications. |
+| 🏭 **Sectors** | Group holdings by sector. All values unified in INR. **Total Portfolio Value** shown in INR. Interactive donut chart. Fetches sector from Yahoo Finance. |
 | 📰 **News** | Latest news from Yahoo Finance for portfolio stocks + market indices. Thumbnails, publisher, time-ago. Filter: All / Portfolio / Market. |
-| 📊 **Benchmark** | Compare Indian portfolio vs Nifty 50, US portfolio vs S&P 500 over 1M/3M/6M/1Y. Portfolio returns drawn as dashed lines on chart. Interactive SVG line chart with hover tooltip. Performance table with invested/current/return. |
-| 📈 **History** | Auto-snapshots portfolio value daily on each price refresh. Line chart + daily table. Up to 365 days. |
+| 📊 **Benchmark** | Compare Indian portfolio vs Nifty 50, US portfolio vs S&P 500 over 1M/3M/6M/1Y. Performance table with invested/current/return. |
+| 📈 **History** | Auto-snapshots portfolio value daily on each price refresh. Split **IN Day Change** and **US Day Change** columns. Line chart + daily table. |
 
 ---
 
@@ -66,7 +64,7 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 ## 📦 Installation
 
 ### For Users
-1. Download `Stock Portfolio Monitor Setup 4.5.1.exe` from Releases
+1. Download `Stock Portfolio Monitor Setup 4.5.2.exe` from Releases
 2. On first launch — enter Groq/Gemini keys or skip (Yahoo Finance only)
 
 ### For Developers
@@ -89,7 +87,7 @@ build-win.bat   # Run as Administrator
 
 ```
 C:\code\
-├── package.json       # v4.5.1, dependencies, build config
+├── package.json       # v4.5.2, dependencies, build config
 ├── vite.config.js
 ├── index.html         # CSP: Yahoo, Groq, Gemini, Yahoo CDN images
 ├── main.js            # Electron main + auto-updater
@@ -100,7 +98,8 @@ C:\code\
 ├── assets/icon.ico    # Portfolio P icon — 7 sizes (16–256px)
 └── src/
     ├── index.js       # React entry
-    ├── App.js         # ~3,000 lines — main app + 10 tool modules
+    ├── App.js         # main app shell + navigation logic
+    ├── modules.js     # Tool modules (Watchlist, Alerts, Sectors, etc.)
     ├── utils.js       # Formatting helpers (fmt, fmtBig, isUS, short, sortRows)
     ├── theme.js       # NVIDIA-style dark/light theme, colors, defaults
     ├── icons.js       # SVG icon components
@@ -122,57 +121,36 @@ C:\code\
 
 | | |
 |---|---|
-| Version | 4.5.1 |
+| Version | 4.5.2 |
 | Author | Arun Verma (arunmcops@gmail.com) |
 | Repository | github.com/arunniperk/stock-portfolio-desktop |
 | Platform | Windows 10/11 (64-bit) |
 
 ---
 
-## 🔧 v4.5.1 Changelog
+## 🔧 v4.5.2 Changelog
 
 | Change | Description |
 |---|---|
-| 📈 **Benchmark chart fix** | Indian and US portfolio returns now drawn as dashed horizontal lines on the SVG chart (🇮🇳 orange, 🇺🇸 cyan). Y-axis range includes portfolio values. Hover tooltip shows portfolio returns alongside index values. |
-| 🔍 **Screener module** | New tool showing PE, Forward PE, PB, EPS, ROE, D/E, Div Yield, Profit Margin, Revenue Growth, Beta, 52-Week High/Low, and Analyst Rating for all portfolio stocks. All columns sortable. Filter by IN/US. Click any row to open Screener.in (Indian stocks) or Yahoo Finance (US stocks). |
-| 📰 **News feed module** | Aggregates latest news from Yahoo Finance for all portfolio stocks plus market news (Nifty, S&P, Indian economy, US markets). Filters: All / Portfolio / Market. Thumbnails, publisher, time-ago display. Staggered API requests to avoid rate limits. |
-| 🔒 **CSP update** | Added `img-src` directive for Yahoo image CDN domains (`*.yimg.com`, `*.yahoo.net`) to load news thumbnails. |
-
-## 🔧 v4.5.0 Changelog
-
-| Change | Description |
-|---|---|
-| 🔄 **Free Qty** | "Unpledged Qty" renamed to "Free Qty" everywhere; column width reduced (minWidth 110→72). |
-| 📊 **Sector allocation** | All values (IN + US) converted to INR for unified allocation percentages. Sector is now always editable (pencil icon on every row, pre-fills current sector, supports Enter/Escape). |
-| 📈 **Split benchmark** | Indian portfolio return shown vs Nifty 50, US portfolio return shown vs S&P 500 — in both the chart legend and performance table with invested/current values. |
-| 🔔 **Alerts quick-pick** | Alerts module shows portfolio stock buttons for one-tap alert creation. Analyst Target column removed from the portfolio table (still accessible in stock detail view). |
-
-## 🔧 v4.4.1 Changelog (Bugfixes + Refactoring)
-
-| Fix | Description |
-|---|---|
-| 🐛 **fetchPrices loop** | Removed `prices` from `useCallback` deps — was causing interval reset on every refresh. Uses functional `setPrices(prev => ...)` instead. |
-| 🐛 **Double onClick** | Dark mode toggle had two `onClick` handlers (React only uses last). Removed the dead first handler. |
-| 🐛 **Benchmark comparison** | `portfolioSeries` always returned `null` (dead code). Now computes actual portfolio return and displays it in legend + performance table vs Nifty 50/S&P 500. |
-| ♻️ **useYahooSearch hook** | Extracted identical `doSearch` implementations from Section, Alerts, Watchlist, Lots into a single shared hook (~60 lines of duplication removed). |
-| ♻️ **File split** | Extracted utils, theme, icons, AI, hooks into 5 separate modules. App.js reduced from 2,921 → 2,704 lines. |
-| ♻️ **SidebarContent** | Documented closure dependencies for future extraction. |
+| 🔔 **Multi-Target Alerts** | Overhauled Alerts module to support dual targets (**Target 1** and **Target 2**). Sequential tracking, independent hit timestamps, and **inline editing** for triggered alerts to easily reset targets. |
+| ↔️ **Collapsible Sidebars** | Added toggle buttons to collapse both left and right sidebars independently. Main content area now expands to fill the screen. State persists across app launches. |
+| 📈 **Split Daily Snapshots** | History module now shows independent **IN Day Chg** and **US Day Chg** columns in the daily snapshot table for better market-specific tracking. |
+| 🏭 **Total Value in Sectors** | Sector Allocation header now displays the **Total Portfolio Value** in INR (calculated via live USD/INR exchange rates). |
+| 🧹 **Module Cleanup** | Removed "Buy Lots", "Tax P&L", and "Screener" modules to simplify the interface and focus on core portfolio management. |
+| 🛡️ **Improved Fetching** | Enhanced Yahoo Finance data retrieval with multi-server fallbacks and batched requests to prevent connection errors and rate limiting. |
 
 ---
 
-## 🔄 Push to GitHub as v4.5.1
+## 🔄 Push to GitHub as v4.5.2
 
 ```cmd
 cd C:\code
 git add .
-git commit -m "Portfolio Manager v4.5.1 - Benchmark chart fix, Screener, News feed"
+git commit -m "Portfolio Manager v4.5.2 - Multi-target alerts, collapsible sidebars, split history"
 git push
-git tag v4.5.1
-git push origin v4.5.1
+git tag v4.5.2
+git push origin v4.5.2
 ```
-
-Then create a GitHub Release → upload installer from `dist\` → Publish.
-Running v4.x instances will show the Update Ready banner automatically.
 
 ---
 

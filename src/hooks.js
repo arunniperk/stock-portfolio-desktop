@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { yahooSearch } from './utils';
+import { getItemSync, setItemSync } from './storage';
 
 // ── FIX #4: Shared Yahoo Finance search hook ─────────────────────────────────
 // Replaces 4 identical doSearch implementations (Section, Alerts, Watchlist, Lots)
@@ -35,14 +36,14 @@ export function useYahooSearch() {
 // ── Notes hook ───────────────────────────────────────────────────────────────
 export function useNotes() {
   const [notes, setNotes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('pm_notes') || '{}'); }
+    try { return JSON.parse(getItemSync('pm_notes') || '{}'); }
     catch { return {}; }
   });
   const saveNote = (sym, text) => {
     setNotes(p => {
       const n = { ...p };
       if (text.trim()) n[sym] = text; else delete n[sym];
-      localStorage.setItem('pm_notes', JSON.stringify(n));
+      setItemSync('pm_notes', JSON.stringify(n));
       return n;
     });
   };

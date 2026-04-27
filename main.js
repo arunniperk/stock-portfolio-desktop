@@ -1,6 +1,10 @@
 // main.js  –  Electron main process
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path   = require('path');
+const fs     = require('fs');
+
+// ── Data directory (all portfolio JSON files live here) ───────────────────────
+const DATA_DIR = path.join(app.getPath('documents'), 'Portfolio');
 const isDev  = process.env.NODE_ENV === 'development';
 
 // ── Auto-updater (electron-updater) ──────────────────────────────────────────
@@ -16,6 +20,7 @@ try {
 }
 
 let mainWindow;
+let _readyToClose = false; // set true once renderer confirms flush is done
 
 function createWindow() {
   // Fill the primary display by default (respects multi-monitor setups)
@@ -52,6 +57,13 @@ function createWindow() {
       mainWindow.webContents.closeDevTools();
     });
   }
+  // ── Graceful-close: intercept close, ask renderer to flush, then close ──────
+  mainWindow.on('close', (e) => {
+    if (!_readyToClose) {
+      e.preventDefault();                                    // pause the close
+      mainWindow.webContents.send('app-closing');            // tell renderer
+    }
+  });
 }
 
 // ── Window control IPC ────────────────────────────────────────────────────────
@@ -65,6 +77,39 @@ ipcMain.on('window-close', () => mainWindow?.close());
 // ── Auto-update IPC ───────────────────────────────────────────────────────────
 ipcMain.on('install-update', () => {
   autoUpdater?.quitAndInstall(false, true);
+});
+
+// ── Flush-complete handshake ──────────────────────────────────────────────────
+// Renderer calls this after it has flushed all pending storage writes to disk.
+ipcMain.on('flush-complete', () => {
+  _readyToClose = true;
+  mainWindow?.close();   // re-trigger close — this time _readyToClose is true
+});
+
+// ── File-based storage IPC ────────────────────────────────────────────────────
+// Ensures the Portfolio directory exists, then reads/writes <key>.json files.
+ipcMain.handle('storage-read', async (_event, key) => {
+  try {
+    if (!fs.existsSync(DATA_DIR)) await fs.promises.mkdir(DATA_DIR, { recursive: true });
+    const file = path.join(DATA_DIR, `${key}.json`);
+    if (!fs.existsSync(file)) return null;
+    return await fs.promises.readFile(file, 'utf8');
+  } catch (e) {
+    console.error('storage-read error:', e);
+    return null;
+  }
+});
+
+ipcMain.handle('storage-write', async (_event, key, value) => {
+  try {
+    if (!fs.existsSync(DATA_DIR)) await fs.promises.mkdir(DATA_DIR, { recursive: true });
+    const file = path.join(DATA_DIR, `${key}.json`);
+    await fs.promises.writeFile(file, value, 'utf8');
+    return true;
+  } catch (e) {
+    console.error('storage-write error:', e);
+    return false;
+  }
 });
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
