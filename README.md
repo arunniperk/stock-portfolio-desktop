@@ -6,11 +6,13 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 
 ## 🚀 Key Features
 
-### ⚡ Performance & Optimization (v4.6.1)
+### ⚡ Performance & Optimization (v4.6.2)
 - **75% Payload Reduction** — Implemented **React.lazy** and **Code Splitting**. Initial JS bundle size is just **117 KB**.
 - **Dynamic XLSX Loading** — Heavy libraries load only on-demand, saving significant startup memory.
 - **Instant "Orbitron" Startup** — Splash screen with background hydration prevents UI thread blocking.
-- **Data Safety (v4.6.1)** — Fixed critical startup race conditions to prevent data loss during asynchronous loading.
+- **Market-Segregated Alerts (v4.6.2)** — Price Alerts are now split into **Indian** and **US** tabs for better organization.
+- **Combined INR History (v4.6.2)** — Portfolio history now tracks total wealth (INR + USD converted) in unified INR terms.
+- **Data Safety** — Fixed critical startup race conditions to prevent data loss during asynchronous loading.
 - **Forced CSV Backups** — Optional mandatory CSV export on exit that now includes both **Portfolio Holdings** and **Price Alerts**.
 
 ### Portfolio Management
@@ -33,11 +35,11 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 |---|---|
 | 👁 **Watchlist** | Track stocks with target entry/exit prices. |
 | 📝 **Notes** | Per-stock notes/rationale. |
-| 🔔 **Price Alerts** | Dual targets and automatic direction detection. Included in auto-backups. |
+| 🔔 **Price Alerts** | **Market-segregated tabs** with sorting capabilities (Stock, LTP, Buy Price, Day %). |
 | 🏭 **Sectors** | Group holdings by sector with unified INR conversion. |
 | 📰 **News** | Filtered news feed from Yahoo Finance. |
 | 📊 **Benchmark** | Compare performance vs **Nifty 50** and **S&P 500** via time-series graphs. |
-| 📈 **History** | Auto-snapshots portfolio value daily. |
+| 📈 **History** | Auto-snapshots **combined portfolio value** daily in INR. |
 
 ---
 
@@ -56,7 +58,7 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 ## 📦 Installation
 
 ### For Users
-1. Download `Stock Portfolio Monitor Setup 4.6.1.exe` from Releases
+1. Download `Stock Portfolio Monitor Setup 4.6.2.exe` from Releases
 2. On first launch — enter Groq/Gemini keys or skip
 
 ### For Developers
@@ -73,19 +75,20 @@ build-win.bat   # Run as Administrator
 
 | | |
 |---|---|
-| Version | 4.6.1 |
+| Version | 4.6.2 |
 | Author | Arun Verma (arunmcops@gmail.com) |
 | Repository | github.com/arunniperk/stock-portfolio-desktop |
 | Platform | Windows 10/11 (64-bit) |
 
 ---
 
-## 🔧 v4.6.1 Changelog
+## 🔧 v4.6.2 Changelog
 
 | Change | Description |
 |---|---|
+| 🔔 **Market Tabs** | Price Alerts are now separated into **Indian Stocks** and **US Stocks** tabs for cleaner management. |
+| 🔢 **Alert Sorting** | Added ascending/descending sorting for the Price Alerts table (Stock, Price, Buy Price, Day %). |
+| 📈 **Unified History** | Historical snapshots now track the **combined value** of both Indian and US portfolios in INR terms. |
 | 🛡️ **Data Integrity** | Fixed a critical race condition where initial states could overwrite disk data during the async startup phase. |
-| 💾 **Enhanced Backups** | Forced exit modal now includes **Price Alerts** in the generated CSV backup. |
 | ⚡ **Performance Engine** | 75% smaller initial payload via React Lazy. Dynamic XLSX loading removes 430KB of bloat. |
 | 🚀 **Orbitron Startup** | Instant-load splash screen with background data hydration. |
-| 🖥️ **Desktop Focus** | Purged all mobile/Capacitor files to optimize for Windows. |
