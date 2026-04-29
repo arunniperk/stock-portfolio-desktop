@@ -742,7 +742,7 @@ Respond ONLY as a JSON object with these keys:
                   {mainTab==='IN'&&<Section title="Indian Equity" flag="🇮🇳" accent={T.inColor} rows={inRows} currency="INR" onImportCSV={()=>setImportModal('IN')} onRowClick={openStockTab} {...sharedProps}/>}
                   {mainTab==='US'&&<Section title="US Equity" flag="🇺🇸" accent={T.usColor} rows={usRows} currency="USD" usdInr={usdInr} onImportCSV={()=>setImportModal('US')} onRowClick={openStockTab} {...sharedProps}/>}
                 </div>
-                <div className="right-sidebar" style={{overflowY:'auto',padding:rightSidebarCollapsed?0:'20px 16px 20px 0',borderLeft:rightSidebarCollapsed?'none':`1px solid ${T.border}`,overflow:'hidden',opacity:rightSidebarCollapsed?0:1,transition:'opacity 0.2s'}}>
+                <div className="right-sidebar" style={{overflowY:'auto',padding:rightSidebarCollapsed?0:'20px 16px 20px 0',borderLeft:rightSidebarCollapsed?'none':`1px solid ${T.border}`,opacity:rightSidebarCollapsed?0:1,transition:'opacity 0.2s'}}>
                   <div style={{padding:'0 0 0 16px'}}>
                     {mainTab==='IN'&&<SidebarContent sRows={inRows} pie={inPie} currency="INR" invAmt={invIN} totalAmt={totalIN} gain={gainIN} dayGain={dayIN} offset={0}/>}
                     {mainTab==='US'&&<SidebarContent sRows={usRows} pie={usPie} currency="USD" usdInr={usdInr} invAmt={invUS} totalAmt={totalUS} gain={gainUS} dayGain={dayUS} offset={6}/>}
