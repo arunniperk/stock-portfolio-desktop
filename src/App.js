@@ -339,12 +339,12 @@ function AppInner() {
   const saveTarget=(id,val)=>setTargets(p=>val==null?Object.fromEntries(Object.entries(p).filter(([k])=>+k!==id)):{...p,[id]:val});
   const saveUnpledgedQty=(id,val)=>setHoldings(p=>p.map(h=>h.id===id?{...h,unpledgedQty:val}:h));
   const importHoldings=rows=>{const nt={};const nh=rows.map(({analystTarget,...h})=>{if(analystTarget!=null)nt[h.id]=analystTarget;return h;});setHoldings(p=>[...p,...nh]);if(Object.keys(nt).length)setTargets(p=>({...p,...nt}));};
-  useEffect(()=>{setItemSync('pm_portfolios',JSON.stringify(portfolios));},[portfolios]);
-  useEffect(()=>{setItemSync('pm_activeId',JSON.stringify(activeId));},[activeId]);
-  useEffect(()=>{setItemSync('pm_sidebar_collapsed',JSON.stringify(sidebarCollapsed));},[sidebarCollapsed]);
-  useEffect(()=>{setItemSync('pm_right_sidebar_collapsed',JSON.stringify(rightSidebarCollapsed));},[rightSidebarCollapsed]);
-  useEffect(()=>{setItemSync('pm_tweaks',JSON.stringify(tweaks));},[tweaks]);
-  useEffect(()=>{setItemSync('pm_portfolio_history',JSON.stringify(history));},[history]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_portfolios',JSON.stringify(portfolios));},[portfolios,isLoaded]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_activeId',JSON.stringify(activeId));},[activeId,isLoaded]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_sidebar_collapsed',JSON.stringify(sidebarCollapsed));},[sidebarCollapsed,isLoaded]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_right_sidebar_collapsed',JSON.stringify(rightSidebarCollapsed));},[rightSidebarCollapsed,isLoaded]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_tweaks',JSON.stringify(tweaks));},[tweaks,isLoaded]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_portfolio_history',JSON.stringify(history));},[history,isLoaded]);
   useEffect(()=>{if(window.electronAPI?.onUpdateAvailable)window.electronAPI.onUpdateAvailable(()=>setUpdateAvail(true));},[]);
   const fetchPrices=useCallback(async()=>{
     if(!holdings.length)return;setLoading(true);setError(null);const out={};
