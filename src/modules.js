@@ -4,7 +4,6 @@ import { Ic } from './icons';
 import { fmt, fmtQty, fmtPct, sortRows, gColor, isUS, short } from './utils';
 import { useYahooSearch, useNotes } from './hooks';
 import { getItemSync, setItemSync } from './storage';
-import * as XLSX from 'xlsx';
 
 export function NotesModule({T,holdings,onClose}) {
   const {notes,saveNote}=useNotes();

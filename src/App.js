@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import * as XLSX from 'xlsx';
+import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { isUS, short, fmtQty, fmt, fmtDual, fmtBig, fmtPct, gColor, sortRows } from './utils';
 import { mkT, PIE, PORT_COLORS, DEF_PF, TWEAK_DEF } from './theme';
 import { Ic } from './icons';
@@ -209,14 +208,66 @@ function BottomNav({activeId, activeModule, onSwitch, T, NAV, MOD_NAV}) {
   );
 }
 
-import { NotesModule, AlertsModule, SectorModule, BenchmarkModule, ScreenerModule, NewsModule, HistoryModule, WatchlistModule } from './modules';
+// Lazy-loaded modules for better startup speed
+const NotesModule     = lazy(() => import('./modules').then(m => ({ default: m.NotesModule })));
+const AlertsModule    = lazy(() => import('./modules').then(m => ({ default: m.AlertsModule })));
+const SectorModule    = lazy(() => import('./modules').then(m => ({ default: m.SectorModule })));
+const BenchmarkModule = lazy(() => import('./modules').then(m => ({ default: m.BenchmarkModule })));
+const NewsModule      = lazy(() => import('./modules').then(m => ({ default: m.NewsModule })));
+const HistoryModule   = lazy(() => import('./modules').then(m => ({ default: m.HistoryModule })));
+const WatchlistModule = lazy(() => import('./modules').then(m => ({ default: m.WatchlistModule })));
+const WatchlistHistoryModule = lazy(() => import('./modules').then(m => ({ default: m.WatchlistHistoryModule })));
+
 function AppInner() {
-  const [tweaks,setTweaks]=useState(()=>{try{const s=getItemSync('pm_tweaks');return s?{...TWEAK_DEF,...JSON.parse(s)}:TWEAK_DEF;}catch{return TWEAK_DEF;}});
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [tweaks,setTweaks]=useState(TWEAK_DEF);
+  const [portfolios,setPortfolios]=useState(DEF_PF);
+  const [activeId,setActiveId]=useState(1);
+  const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
+  const [rightSidebarCollapsed,setRightSidebarCollapsed]=useState(false);
+  const [groqKey,setGroqKey]=useState('');
+  const [geminiKey,setGeminiKey]=useState('');
+  const [primaryAI,setPrimaryAI]=useState('groq');
+  const [history,setHistory]=useState([]);
+
+  useEffect(() => {
+    // Run after initial mount to keep the UI thread responsive
+    setTimeout(() => {
+      try {
+        const sTweaks = getItemSync('pm_tweaks');
+        if(sTweaks) setTweaks({...TWEAK_DEF, ...JSON.parse(sTweaks)});
+        
+        const sPfs = getItemSync('pm_portfolios');
+        if(sPfs) setPortfolios(JSON.parse(sPfs));
+        
+        const sActive = getItemSync('pm_activeId');
+        if(sActive) setActiveId(JSON.parse(sActive));
+        
+        setSidebarCollapsed(JSON.parse(getItemSync('pm_sidebar_collapsed') || 'false'));
+        setRightSidebarCollapsed(JSON.parse(getItemSync('pm_right_sidebar_collapsed') || 'false'));
+        setGroqKey(getItemSync('pm_groq_key') || '');
+        setGeminiKey(getItemSync('pm_gemini_key') || '');
+        setPrimaryAI(getItemSync('pm_primary_ai') || 'groq');
+        setHistory(JSON.parse(getItemSync('pm_portfolio_history') || '[]'));
+        
+        const gKey = getItemSync('pm_groq_key');
+        const gmKey = getItemSync('pm_gemini_key');
+        setShowAISetup(gKey === null && gmKey === null);
+      } catch(e) {
+        console.error("Storage load error:", e);
+      } finally {
+        setIsLoaded(true);
+      }
+    }, 0);
+  }, []);
+
+  const [aiAnalyses,setAiAnalyses]=useState({});
+  const [usdInr,setUsdInr]=useState(null);
+  const [showAISetup,setShowAISetup]=useState(false);
+
   const [showSettings,setShowSettings]=useState(false);
   const [importModal,setImportModal]=useState(null);
   const T=useMemo(()=>mkT(tweaks.darkMode),[tweaks.darkMode]);
-  const [portfolios,setPortfolios]=useState(()=>{try{const s=getItemSync('pm_portfolios');return s?JSON.parse(s):DEF_PF;}catch{return DEF_PF;}});
-  const [activeId,setActiveId]=useState(()=>{try{const s=getItemSync('pm_activeId');return s?JSON.parse(s):1;}catch{return 1;}});
   const [prices,setPrices]=useState({});
   const pricesRef=useRef({});
   useEffect(()=>{pricesRef.current=prices;},[prices]);
@@ -228,21 +279,8 @@ function AppInner() {
   const [activeModule,setActiveModule]=useState(null);
   const [openStockTabs,setOpenStockTabs]=useState([]);
   const [stockDetails,setStockDetails]=useState({});
-  const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>{try{return JSON.parse(getItemSync('pm_sidebar_collapsed')||'false');}catch{return false;}});
-  const [rightSidebarCollapsed,setRightSidebarCollapsed]=useState(()=>{try{return JSON.parse(getItemSync('pm_right_sidebar_collapsed')||'false');}catch{return false;}});
-
-  // AI provider state
-  const [groqKey,setGroqKey]=useState(()=>getItemSync('pm_groq_key'));
-  const [geminiKey,setGeminiKey]=useState(()=>getItemSync('pm_gemini_key'));
-  const [primaryAI,setPrimaryAI]=useState(()=>getItemSync('pm_primary_ai')||'groq');
-  const [showAISetup,setShowAISetup]=useState(()=>
-    getItemSync('pm_groq_key')===null && getItemSync('pm_gemini_key')===null
-  );
-  const [aiAnalyses,setAiAnalyses]=useState({});
-  const [usdInr,setUsdInr]=useState(null); // live exchange rate
-  const [history,setHistory]=useState(()=>{try{return JSON.parse(getItemSync('pm_portfolio_history')||'[]');}catch{return [];}});
   const isElectron = !!window.electronAPI;
-  const isCapacitor = !!window.Capacitor && !isElectron;
+  const isCapacitor = false;
   const isMobile = window.innerWidth < 768;
 
   // Fetch USD/INR rate from Yahoo Finance
@@ -511,6 +549,8 @@ Respond ONLY as a JSON object with these keys:
     {id:'history',   label:'History',  icon:'📈', color:'#f97316'},
   ];
 
+  if(!isLoaded) return <div style={{height:'100vh',background:T.bg,display:'flex',alignItems:'center',justifyContent:'center',color:T.accent,fontSize:20,fontWeight:700,fontFamily:'Orbitron, sans-serif',letterSpacing:'.1em',textShadow:`0 0 20px ${T.accent}60`}}>ORBITRON PORTFOLIO...</div>;
+
   return(
     <div style={{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',background:T.bg,height:'100vh',display:'flex',flexDirection:'column',color:T.text,overflow:'hidden'}}>
       <style>{`
@@ -638,13 +678,15 @@ Respond ONLY as a JSON object with these keys:
 
         {/* Main Content */}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
-          {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
-          {activeModule==='notes'&&<NotesModule T={T} holdings={holdings} onClose={()=>setActiveModule(null)}/>}
-          {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
-          {activeModule==='sectors'&&<SectorModule T={T} rows={allRows} prices={prices} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
-          {activeModule==='news'&&<NewsModule T={T} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
-          {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr} history={history} onClose={()=>setActiveModule(null)}/>}
-          {activeModule==='history'&&<HistoryModule T={T} rows={allRows} history={history} setHistory={setHistory} onClose={()=>setActiveModule(null)}/>}
+          <Suspense fallback={<div style={{padding:40,color:T.text3}}>Loading module...</div>}>
+            {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='notes'&&<NotesModule T={T} holdings={holdings} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='sectors'&&<SectorModule T={T} rows={allRows} prices={prices} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='news'&&<NewsModule T={T} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr} history={history} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='history'&&<HistoryModule T={T} rows={allRows} history={history} setHistory={setHistory} onClose={()=>setActiveModule(null)}/>}
+          </Suspense>
           {!activeModule&&activeStock?(
             <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
           ):(!activeModule&&(

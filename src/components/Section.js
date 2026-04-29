@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from 'react';
-import * as XLSX from 'xlsx';
 import { useYahooSearch } from '../hooks';
 import { NvBtn, NvInput, Badge, SortTh } from './ui';
 import { UnpledgedQtyCell, StatCard } from './cells';
@@ -34,7 +33,8 @@ export function Section({title,flag,accent,rows,currency,usdInr,onSaveUnpledged,
     const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`portfolio_${currency}_${new Date().toISOString().slice(0,10)}.csv`});
     a.click();
   };
-  const xlsxExport=()=>{
+  const xlsxExport=async()=>{
+    const XLSX = await import('xlsx');
     const {h,body}=buildExportData();
     const ws=XLSX.utils.aoa_to_sheet([h,...body]);
     // Auto column widths
