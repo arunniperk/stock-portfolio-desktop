@@ -120,8 +120,8 @@ export function Section({title,flag,accent,rows,currency,usdInr,onSaveUnpledged,
       )}
       {/* Table */}
       <div style={{background:T.surface2,borderRadius:T.r,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-        <div style={{overflowX:'auto'}}>
-          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <div className="section-table-container" style={{overflowX:'auto'}}>
+          <table className="section-table" style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
             <thead>
               <tr>
                 <SortTh T={T} label="Stock"          col="name"      sort={sort} onSort={onSort} minW={150} sticky/>

@@ -1,0 +1,101 @@
+/* Mobile Responsiveness for Portfolio Manager */
+
+@media (max-width: 768px) {
+  /* Sidebar handling */
+  .main-container {
+    flex-direction: column !important;
+    padding-bottom: 60px !important; /* Space for bottom nav */
+  }
+  
+  /* Hide sidebars on mobile, use bottom nav instead */
+  .main-container > div:first-child,
+  .right-sidebar {
+    display: none !important;
+  }
+
+  .main-grid {
+    grid-template-columns: 1fr !important;
+    display: block !important;
+    overflow-y: auto !important;
+    flex: 1 !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Fix vertical scrolling */
+  .main-container, .main-container > div:nth-child(2) {
+    overflow-y: auto !important;
+    height: 100% !important;
+  }
+  
+  /* Tables need to scroll horizontally */
+  .section-table-container {
+    overflow-x: auto !important;
+    width: 100% !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .section-table {
+    min-width: 600px !important;
+  }
+
+  /* Grid layout in Main Content */
+  .main-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .right-sidebar {
+    width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid var(--border) !important;
+    padding: 20px !important;
+    opacity: 1 !important;
+  }
+
+  /* Title bar adjustments */
+  .title-bar {
+    height: auto !important;
+    flex-direction: column !important;
+    padding: 10px 20px !important;
+    gap: 12px !important;
+  }
+
+  .title-bar-logo {
+    width: 100% !important;
+    justify-content: flex-start !important;
+  }
+
+  .pnl-pills {
+    width: 100% !important;
+    justify-content: space-between !important;
+    overflow-x: auto !important;
+    padding-bottom: 4px !important;
+  }
+
+  .title-bar-controls {
+    width: 100% !important;
+    justify-content: space-between !important;
+  }
+
+  /* Font and size adjustments */
+  .stat-value {
+    font-size: 11px !important;
+  }
+  
+  .pnl-pills {
+    gap: 6px !important;
+  }
+  
+  .pnl-pills > div {
+    padding: 4px 8px !important;
+    min-width: 0 !important;
+  }
+
+  .pnl-pills span {
+    font-size: 10px !important;
+  }
+}
+
+/* Hide Electron controls on Capacitor */
+.capacitor-hidden {
+  display: none !important;
+}

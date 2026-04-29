@@ -6,7 +6,7 @@ import { useYahooSearch, useNotes } from './hooks';
 import { getItemSync, setItemSync } from './storage';
 import * as XLSX from 'xlsx';
 
-export function NotesModule({T,holdings}) {
+export function NotesModule({T,holdings,onClose}) {
   const {notes,saveNote}=useNotes();
   const [editSym,setEditSym]=useState(null);
   const [editText,setEditText]=useState('');
@@ -17,13 +17,17 @@ export function NotesModule({T,holdings}) {
   const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Stock Notes</div>
           <div style={{fontSize:13,color:T.text3}}>{Object.keys(notes).length} note{Object.keys(notes).length!==1?'s':''}</div>
         </div>
-        <div style={{position:'relative'}}><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:T.text3,pointerEvents:'none'}}><Ic.Search/></span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter stocks…" style={{...INP,width:180,paddingLeft:30}}/></div>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{position:'relative'}}><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:T.text3,pointerEvents:'none'}}><Ic.Search/></span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter stocks…" style={{...INP,width:180,paddingLeft:30}}/></div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
+        </div>
       </div>
 
       {!allSymbols.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No notes yet. Click any stock detail tab to add notes.</div>}
@@ -60,6 +64,7 @@ export function NotesModule({T,holdings}) {
           );
         })}
       </div>
+      </div>
     </div>
   );
 }
@@ -70,7 +75,7 @@ export function NotesModule({T,holdings}) {
 // Storage: pm_alerts = [{id,symbol,name,direction,price,currency,triggered,triggeredAt}]
 // Alerts are checked whenever prices refresh
 
-export function AlertsModule({T,prices,holdings}) {
+export function AlertsModule({T,prices,holdings,onClose}) {
   const [alerts,setAlerts]=useState(()=>{
     try{
       const raw=JSON.parse(getItemSync('pm_alerts')||'[]');
@@ -86,11 +91,10 @@ export function AlertsModule({T,prices,holdings}) {
       }));
     }catch{return [];}
   });
-  const [form,setForm]=useState({symbol:'',name:'',direction:'above',t1:'',t2:'',currency:'INR'});
+  const [form,setForm]=useState({symbol:'',name:'',t1:'',t2:'',currency:'INR'});
   const [showAdd,setShowAdd]=useState(false);
   const [editingId,setEditingId]=useState(null);
   const [editForm,setEditForm]=useState({t1:'',t2:''});
-  const {srch,setSrch,results,setResults,focused,setFocused,busyS,doSearch,clearSearch}=useYahooSearch();
 
   useEffect(()=>{setItemSync('pm_alerts',JSON.stringify(alerts));},[alerts]);
 
@@ -128,7 +132,7 @@ export function AlertsModule({T,prices,holdings}) {
       return a;
     });
     if(changed){setAlerts(updated);setItemSync('pm_alerts',JSON.stringify(updated));}
-  },[prices]);
+  },[prices, alerts]);
 
   // Request notification permission
   useEffect(()=>{
@@ -141,11 +145,13 @@ export function AlertsModule({T,prices,holdings}) {
 
   const addAlert=()=>{
     if(!form.symbol||!form.t1)return;
+    const cp=prices[form.symbol]?.current;
+    const dir=(cp && parseFloat(form.t1)<cp)?'below':'above';
     setAlerts(p=>[{
       id:Date.now(),
       symbol:form.symbol,
       name:form.name||form.symbol,
-      direction:form.direction,
+      direction:dir,
       t1:parseFloat(form.t1),
       t1Hit:false,
       t1HitAt:null,
@@ -155,14 +161,16 @@ export function AlertsModule({T,prices,holdings}) {
       currency:form.currency,
       createdAt:Date.now()
     },...p]);
-    setForm({symbol:'',name:'',direction:'above',t1:'',t2:'',currency:'INR'});setSrch('');setResults([]);setShowAdd(false);
+    setForm({symbol:'',name:'',t1:'',t2:'',currency:'INR'});setShowAdd(false);
   };
   const removeAlert=id=>setAlerts(p=>p.filter(a=>a.id!==id));
+  const removeAllForStock=sym=>setAlerts(p=>p.filter(a=>a.symbol!==sym));
   const resetAlert=id=>setAlerts(p=>p.map(a=>a.id===id?{...a,t1Hit:false,t1HitAt:null,t2Hit:false,t2HitAt:null}:a));
   const saveEdit=(id)=>{
     setAlerts(p=>p.map(a=>a.id===id?{...a,t1:parseFloat(editForm.t1),t2:editForm.t2?parseFloat(editForm.t2):null,t1Hit:false,t2Hit:false,t1HitAt:null,t2HitAt:null}:a));
     setEditingId(null);
   };
+
 
   const active=alerts.filter(a=>!a.t1Hit || (a.t2!=null && !a.t2Hit));
   const triggered=alerts.filter(a=>a.t1Hit && (a.t2==null || a.t2Hit));
@@ -170,13 +178,17 @@ export function AlertsModule({T,prices,holdings}) {
   const tdS={padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontSize:12};
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Price Alerts</div>
           <div style={{fontSize:13,color:T.text3}}>{active.length} active · {triggered.length} triggered</div>
         </div>
-        <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> New Alert</NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> New Alert</NvBtn>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
+        </div>
       </div>
 
       {showAdd&&(
@@ -193,26 +205,19 @@ export function AlertsModule({T,prices,holdings}) {
               </div>
             </div>
           )}
-          <div style={{display:'grid',gridTemplateColumns:'1.5fr 0.8fr 0.8fr 0.8fr 0.6fr auto',gap:10,alignItems:'end'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1.5fr 0.8fr 0.8fr 0.6fr auto',gap:10,alignItems:'end'}}>
             <div>
               <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Stock</div>
-              <div style={{position:'relative'}}>
-                <input value={srch} onChange={e=>doSearch(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setTimeout(()=>setFocused(false),200)} placeholder="Search stock…" style={INP} autoFocus/>
-                {focused&&results.length>0&&(
-                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:9999,background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.3)',overflow:'hidden'}}>
-                    {results.map((r,i)=><div key={r.symbol} onMouseDown={()=>{setForm(p=>({...p,symbol:r.symbol,name:r.longname||r.shortname||r.symbol,currency:isUS(r.symbol)?'USD':'INR'}));setSrch(r.longname||r.shortname||r.symbol);setResults([]);}} style={{padding:'9px 14px',cursor:'pointer',display:'flex',justifyContent:'space-between',borderBottom:i<results.length-1?`1px solid ${T.border}`:'none',transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <span style={{fontWeight:700,color:T.accent,marginRight:8}}>{r.symbol}</span><span style={{fontSize:11,color:T.text3}}>{r.longname||r.shortname}</span>
-                    </div>)}
-                  </div>
-                )}
-              </div>
-              {form.symbol&&<div style={{fontSize:11,color:T.accent,marginTop:3,fontWeight:600}}>✓ {form.symbol}</div>}
-            </div>
-            <div>
-              <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Dir</div>
-              <select value={form.direction} onChange={e=>setForm(p=>({...p,direction:e.target.value}))} style={{...INP}}>
-                <option value="above">Above ▲</option>
-                <option value="below">Below ▼</option>
+              <select 
+                value={form.symbol} 
+                onChange={e=>{
+                  const h=holdings.find(x=>x.symbol===e.target.value);
+                  setForm(p=>({...p,symbol:e.target.value,name:h?.name||e.target.value,currency:isUS(e.target.value)?'USD':'INR'}));
+                }} 
+                style={INP}
+              >
+                <option value="">Select Portfolio Stock…</option>
+                {holdings.map(h=><option key={h.symbol} value={h.symbol}>{short(h.symbol)} — {h.name}</option>)}
               </select>
             </div>
             <div>
@@ -230,50 +235,70 @@ export function AlertsModule({T,prices,holdings}) {
                 <option value="USD">🇺🇸 USD</option>
               </select>
             </div>
-            <div style={{display:'flex',gap:6}}>
+            <div style={{display:'flex',gap:6,alignItems:'center'}}>
               <NvBtn onClick={addAlert} variant="primary" disabled={!form.symbol||!form.t1} T={T}><Ic.Plus/> Add</NvBtn>
-              <NvBtn onClick={()=>{setShowAdd(false);setSrch('');setResults([]);}} T={T}><Ic.X/></NvBtn>
+              <NvBtn onClick={()=>{setShowAdd(false);}} T={T}><Ic.X/></NvBtn>
             </div>
           </div>
         </div>
       )}
 
-      {!alerts.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No alerts set. Add a price alert to get notified when a stock crosses your target.</div>}
-
-      {active.length>0&&(
-        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',gap:8}}>
-            <div style={{width:3,height:16,background:T.accent,borderRadius:2}}/>
+      {/* Active Alerts List */}
+      <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
+        <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <div style={{width:3,height:16,background:T.cyan,borderRadius:2}}/>
             <span style={{fontSize:13,fontWeight:700,color:T.text}}>Active Alerts</span>
+            <span style={{fontSize:11,color:T.text3,background:T.surface3,padding:'2px 8px',borderRadius:10,fontWeight:600}}>{active.length}</span>
           </div>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead><tr style={{background:T.surface3}}>{['Stock','Direction','Target 1','Target 2','LTP','Created',''].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700}}>{h}</th>)}</tr></thead>
-            <tbody>{active.map((a,i)=>{
-              const cp=prices[a.symbol]?.current;
-              const sym=a.currency==='USD'?'$':'₹';
+        </div>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr style={{background:T.surface3}}>{['Stock','LTP','Buy Price','Day %','Alert Status','Quick Set'].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700,textAlign:h==='Stock'?'left':'right'}}>{h}</th>)}</tr></thead>
+          <tbody>
+            {holdings.filter(h=>alerts.some(a=>a.symbol===h.symbol && !triggered.some(t=>t.id===a.id))).map((h,i)=>{
+              const cp=prices[h.symbol]?.current;
+              const prev=prices[h.symbol]?.prev;
+              const dayPct=cp&&prev?((cp-prev)/prev*100):null;
+              const cur=isUS(h.symbol)?'USD':'INR';
+              const sym=cur==='USD'?'$':'₹';
+              const activeForStock=alerts.filter(a=>a.symbol===h.symbol && (!a.t1Hit || (a.t2!=null && !a.t2Hit)));
               return(
-                <tr key={a.id} style={{background:i%2===0?T.surface2:T.surface3}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
-                  <td style={{...tdS}}><div style={{fontWeight:700,color:T.accent}}>{short(a.symbol)}</div><div style={{fontSize:10,color:T.text3}}>{a.name}</div></td>
-                  <td style={{...tdS}}><span style={{padding:'2px 8px',borderRadius:12,fontSize:11,fontWeight:700,background:a.direction==='above'?T.successBg:T.dangerBg,color:a.direction==='above'?T.success:T.danger}}>{a.direction==='above'?'▲ Above':'▼ Below'}</span></td>
-                  <td style={{...tdS}}>
-                    <div style={{fontWeight:700,color:a.t1Hit?T.success:T.text}}>{sym}{a.t1.toLocaleString()}</div>
-                    {a.t1Hit&&<div style={{fontSize:9,color:T.success}}>Hit {new Date(a.t1HitAt).toLocaleTimeString()}</div>}
+                <tr key={h.symbol} style={{background:i%2===0?T.surface2:T.surface3,transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
+                  <td style={{...tdS,textAlign:'left'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <button onClick={()=>removeAllForStock(h.symbol)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:0,display:'flex',transition:'color .1s'}} onMouseEnter={e=>e.currentTarget.style.color=T.danger} onMouseLeave={e=>e.currentTarget.style.color=T.text3} title="Remove all alerts for this stock"><Ic.Trash/></button>
+                      <div style={{width:24,height:24,borderRadius:6,background:isUS(h.symbol)?'rgba(0,180,216,.12)':'rgba(255,152,0,.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:isUS(h.symbol)?T.usColor:T.inColor,flexShrink:0}}>{short(h.symbol).slice(0,2)}</div>
+                      <div><div style={{fontWeight:700,color:T.text,fontSize:12}}>{short(h.symbol)}</div><div style={{fontSize:10,color:T.text3,maxWidth:80,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.name}</div></div>
+                    </div>
                   </td>
-                  <td style={{...tdS}}>
-                    {a.t2?<>
-                      <div style={{fontWeight:700,color:a.t2Hit?T.success:T.text}}>{sym}{a.t2.toLocaleString()}</div>
-                      {a.t2Hit&&<div style={{fontSize:9,color:T.success}}>Hit {new Date(a.t2HitAt).toLocaleTimeString()}</div>}
-                    </>:'—'}
+                  <td style={{...tdS,textAlign:'right',fontWeight:700,color:T.text}}>{cp?`${sym}${cp.toFixed(2)}`:'—'}</td>
+                  <td style={{...tdS,textAlign:'right',color:T.text2}}>{sym}{h.buyPrice.toFixed(2)}</td>
+                  <td style={{...tdS,textAlign:'right'}}>{dayPct!=null?<span style={{fontWeight:700,color:dayPct>=0?T.success:T.danger}}>{dayPct>=0?'+':''}{dayPct.toFixed(2)}%</span>:'—'}</td>
+                  <td style={{...tdS,textAlign:'right'}}>
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
+                      {activeForStock.length>0 ? activeForStock.map(a=>(
+                        <div key={a.id} style={{display:'flex',alignItems:'center',gap:4}}>
+                          <span style={{padding:'2px 8px',borderRadius:12,fontSize:10,fontWeight:700,background:T.accentBg,color:T.accent}}>{a.direction==='above'?'▲':'▼'} {sym}{a.t1}{a.t2?` / ${a.t2}`:''}</span>
+                          <button onClick={()=>removeAlert(a.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:0,display:'flex'}}><Ic.X/></button>
+                        </div>
+                      )) : <span style={{fontSize:10,color:T.text3}}>No alert</span>}
+                    </div>
                   </td>
-                  <td style={{...tdS,color:T.cyan}}>{cp?`${sym}${cp.toFixed(2)}`:'—'}</td>
-                  <td style={{...tdS,color:T.text3,fontSize:11}}>{new Date(a.createdAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</td>
-                  <td style={{...tdS}}><button onClick={()=>removeAlert(a.id)} style={{background:'none',border:'none',cursor:'pointer',color:T.text3,padding:'3px 6px',borderRadius:4,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;}}><Ic.Trash/></button></td>
+                  <td style={{...tdS,textAlign:'right'}}>
+                    <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
+                      {cp&&<>
+                        <button onClick={()=>{setAlerts(p=>[{id:Date.now(),symbol:h.symbol,name:h.name,direction:'above',t1:Math.round(cp*1.05*100)/100,t1Hit:false,t1HitAt:null,t2:Math.round(cp*1.10*100)/100,t2Hit:false,t2HitAt:null,currency:cur,createdAt:Date.now()},...p]);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.success}40`,background:T.successBg,color:T.success,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.background=T.success+'30'} onMouseLeave={e=>e.currentTarget.style.background=T.successBg} title={`Alert above ${sym}${(cp*1.05).toFixed(0)} (+5%)`}>▲ +5%</button>
+                        <button onClick={()=>{setAlerts(p=>[{id:Date.now()+1,symbol:h.symbol,name:h.name,direction:'below',t1:Math.round(cp*0.95*100)/100,t1Hit:false,t1HitAt:null,t2:Math.round(cp*0.90*100)/100,t2Hit:false,t2HitAt:null,currency:cur,createdAt:Date.now()},...p]);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.danger}40`,background:T.dangerBg,color:T.danger,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.background=T.danger+'30'} onMouseLeave={e=>e.currentTarget.style.background=T.dangerBg} title={`Alert below ${sym}${(cp*0.95).toFixed(0)} (-5%)`}>▼ -5%</button>
+                        <button onClick={()=>{setShowAdd(true);setForm({symbol:h.symbol,name:h.name,t1:'',t2:'',currency:cur});}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.border2}`,background:'transparent',color:T.text3,cursor:'pointer',fontSize:10,fontWeight:600,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border2;e.currentTarget.style.color=T.text3;}}>Custom</button>
+                      </>}
+                    </div>
+                  </td>
                 </tr>
               );
-            })}</tbody>
-          </table>
-        </div>
-      )}
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {triggered.length>0&&(
         <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.success}40`,overflow:'hidden'}}>
@@ -282,14 +307,13 @@ export function AlertsModule({T,prices,holdings}) {
             <span style={{fontSize:13,fontWeight:700,color:T.text}}>Triggered Alerts</span>
           </div>
           <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead><tr style={{background:T.surface3}}>{['Stock','Direction','Results','Completed At','Actions'].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700}}>{h}</th>)}</tr></thead>
+            <thead><tr style={{background:T.surface3}}>{['Stock','Results','Completed At','Actions'].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700}}>{h}</th>)}</tr></thead>
             <tbody>{triggered.map((a,i)=>{
               const sym=a.currency==='USD'?'$':'₹';
               const isEdit=editingId===a.id;
               return(
                 <tr key={a.id} style={{background:i%2===0?T.surface2:T.surface3}}>
                   <td style={{...tdS}}><div style={{fontWeight:700,color:T.accent}}>{short(a.symbol)}</div></td>
-                  <td style={{...tdS}}><span style={{fontSize:11,color:a.direction==='above'?T.success:T.danger}}>{a.direction==='above'?'▲ Above':'▼ Below'}</span></td>
                   <td style={{...tdS}}>
                     {isEdit ? (
                       <div style={{display:'flex',gap:6}}>
@@ -323,56 +347,7 @@ export function AlertsModule({T,prices,holdings}) {
           </table>
         </div>
       )}
-
-      {/* Portfolio Stocks — quick-set alerts for all holdings */}
-      {holdings?.length>0&&(
-        <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <div style={{width:3,height:16,background:T.cyan,borderRadius:2}}/>
-              <span style={{fontSize:13,fontWeight:700,color:T.text}}>Portfolio Stocks</span>
-              <span style={{fontSize:11,color:T.text3,background:T.surface3,padding:'2px 8px',borderRadius:10,fontWeight:600}}>{holdings.length}</span>
-            </div>
-            <span style={{fontSize:11,color:T.text3}}>Set alerts directly from your holdings</span>
-          </div>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead><tr style={{background:T.surface3}}>{['Stock','LTP','Buy Price','Day %','Alert Status','Quick Set'].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700,textAlign:h==='Stock'?'left':'right'}}>{h}</th>)}</tr></thead>
-            <tbody>{holdings.map((h,i)=>{
-              const cp=prices[h.symbol]?.current;
-              const prev=prices[h.symbol]?.prev;
-              const dayPct=cp&&prev?((cp-prev)/prev*100):null;
-              const cur=isUS(h.symbol)?'USD':'INR';
-              const sym=cur==='USD'?'$':'₹';
-              const hasActive=alerts.some(a=>a.symbol===h.symbol&&!a.triggered);
-              const activeAlert=alerts.find(a=>a.symbol===h.symbol&&!a.triggered);
-              return(
-                <tr key={h.symbol} style={{background:i%2===0?T.surface2:T.surface3,transition:'background .08s'}} onMouseEnter={e=>e.currentTarget.style.background=T.surface4} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?T.surface2:T.surface3}>
-                  <td style={{...tdS,textAlign:'left'}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      <div style={{width:28,height:28,borderRadius:6,background:isUS(h.symbol)?'rgba(0,180,216,.12)':'rgba(255,152,0,.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:isUS(h.symbol)?T.usColor:T.inColor,flexShrink:0}}>{short(h.symbol).slice(0,2)}</div>
-                      <div><div style={{fontWeight:700,color:T.text,fontSize:12}}>{short(h.symbol)}</div><div style={{fontSize:10,color:T.text3,maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.name}</div></div>
-                    </div>
-                  </td>
-                  <td style={{...tdS,textAlign:'right',fontWeight:700,color:T.text}}>{cp?`${sym}${cp.toFixed(2)}`:'—'}</td>
-                  <td style={{...tdS,textAlign:'right',color:T.text2}}>{sym}{h.buyPrice.toFixed(2)}</td>
-                  <td style={{...tdS,textAlign:'right'}}>{dayPct!=null?<span style={{fontWeight:700,color:dayPct>=0?T.success:T.danger}}>{dayPct>=0?'+':''}{dayPct.toFixed(2)}%</span>:'—'}</td>
-                  <td style={{...tdS,textAlign:'right'}}>{hasActive?<span style={{padding:'2px 8px',borderRadius:12,fontSize:10,fontWeight:700,background:T.accentBg,color:T.accent}}>{activeAlert.direction==='above'?'▲':'▼'} {sym}{activeAlert.price}</span>:<span style={{fontSize:10,color:T.text3}}>No alert</span>}</td>
-                  <td style={{...tdS,textAlign:'right'}}>
-                    <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
-                      {cp&&!hasActive&&<>
-                        <button onClick={()=>{setAlerts(p=>[{id:Date.now(),symbol:h.symbol,name:h.name,direction:'above',price:Math.round(cp*1.05*100)/100,currency:cur,triggered:false,triggeredAt:null,createdAt:Date.now()},...p]);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.success}40`,background:T.successBg,color:T.success,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.background=T.success+'30'} onMouseLeave={e=>e.currentTarget.style.background=T.successBg} title={`Alert above ${sym}${(cp*1.05).toFixed(0)} (+5%)`}>▲ +5%</button>
-                        <button onClick={()=>{setAlerts(p=>[{id:Date.now()+1,symbol:h.symbol,name:h.name,direction:'below',price:Math.round(cp*0.95*100)/100,currency:cur,triggered:false,triggeredAt:null,createdAt:Date.now()},...p]);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.danger}40`,background:T.dangerBg,color:T.danger,cursor:'pointer',fontSize:10,fontWeight:700,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.background=T.danger+'30'} onMouseLeave={e=>e.currentTarget.style.background=T.dangerBg} title={`Alert below ${sym}${(cp*0.95).toFixed(0)} (-5%)`}>▼ -5%</button>
-                        <button onClick={()=>{setShowAdd(true);setForm({symbol:h.symbol,name:h.name,direction:'above',price:'',currency:cur});setSrch(h.name);}} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.border2}`,background:'transparent',color:T.text3,cursor:'pointer',fontSize:10,fontWeight:600,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border2;e.currentTarget.style.color=T.text3;}}>Custom</button>
-                      </>}
-                      {hasActive&&<button onClick={()=>removeAlert(activeAlert.id)} style={{padding:'3px 8px',borderRadius:5,border:`1px solid ${T.danger}40`,background:'transparent',color:T.text3,cursor:'pointer',fontSize:10,fontWeight:600,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.color=T.text3;}} title="Remove alert"><Ic.Trash/></button>}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}</tbody>
-          </table>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -383,7 +358,7 @@ export function AlertsModule({T,prices,holdings}) {
 // Fetches sector from Yahoo Finance v10 quoteSummary assetProfile
 // Storage: pm_sectors = { SYMBOL: { sector, industry } }
 
-export function SectorModule({T,rows,prices,usdInr}) {
+export function SectorModule({T,rows,prices,usdInr,onClose}) {
   const [sectorMap,setSectorMap]=useState(()=>{try{return JSON.parse(getItemSync('pm_sectors')||'{}');}catch{return {};}});
   const [loading,setLoading]=useState(false);
   const [manualEdit,setManualEdit]=useState(null);
@@ -441,7 +416,8 @@ export function SectorModule({T,rows,prices,usdInr}) {
   const INP={padding:'7px 10px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',fontFamily:'inherit'};
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Sector Allocation</div>
@@ -450,7 +426,10 @@ export function SectorModule({T,rows,prices,usdInr}) {
             <span style={{color:T.accent,fontWeight:600,marginLeft:4}}>Total Value: ₹{totalValue.toLocaleString('en-IN',{maximumFractionDigits:0})}</span>
           </div>
         </div>
-        <NvBtn onClick={fetchSectors} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Fetching sectors…':'Refresh Sectors'}</NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <NvBtn onClick={fetchSectors} disabled={loading} T={T}><Ic.Refresh s={loading}/>{loading?'Fetching sectors…':'Refresh Sectors'}</NvBtn>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
+        </div>
       </div>
 
       {rows.length===0&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No holdings found. Add stocks to your portfolio first.</div>}
@@ -511,6 +490,7 @@ export function SectorModule({T,rows,prices,usdInr}) {
         </div>
       )}
       <div style={{fontSize:11,color:T.text3}}>Sector data from Yahoo Finance. Click "Refresh Sectors" to fetch. Set manually for any missing stocks.</div>
+      </div>
     </div>
   );
 }
@@ -519,14 +499,14 @@ export function SectorModule({T,rows,prices,usdInr}) {
 // ── MODULE: BENCHMARK COMPARISON ─────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
+export function BenchmarkModule({T,rows,inRows,usRows,usdInr,history,onClose}) {
   const [benchData,setBenchData]=useState({});
   const [loading,setLoading]=useState(false);
-  const [range,setRange]=useState('3mo');
+  const [range,setRange]=useState('5d');
   const [hover,setHover]=useState(null);
   const svgRef=useRef();
 
-  const RANGES=[{v:'1mo',l:'1M'},{v:'3mo',l:'3M'},{v:'6mo',l:'6M'},{v:'1y',l:'1Y'}];
+  const RANGES=[{v:'5d',l:'5D'},{v:'1mo',l:'1M'},{v:'3mo',l:'3M'},{v:'6mo',l:'6M'},{v:'1y',l:'1Y'}];
   const BENCHES=[
     {sym:'^NSEI',label:'Nifty 50',color:'#f59e0b'},
     {sym:'^GSPC',label:'S&P 500',color:'#00b4d8'},
@@ -570,42 +550,58 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
     return((totalCurrent-totalInvested)/totalInvested)*100;
   },[rows,usdInr]);
 
+
   // Normalize benchmark series to % return from start
   const normalized=useMemo(()=>{
     const out={};
+    const toS=ts=>new Date(ts).toISOString().slice(0,10);
     BENCHES.forEach(b=>{
       const s=benchData[b.sym];if(!s||!s.length)return;
       const base=s[0].close;
-      out[b.sym]=s.map(d=>({date:d.date,pct:(d.close/base-1)*100}));
+      out[b.sym]=s.map(d=>({date:toS(d.date),pct:(d.close/base-1)*100}));
     });
+    // Normalize portfolio series
+    const firstBench=Object.values(out)[0];
+    if(firstBench?.length>0 && history.length>0){
+      const start=firstBench[0].date, end=firstBench[firstBench.length-1].date;
+      const hRange=history.filter(h=>h.date>=start && h.date<=end);
+      if(hRange.length>0){
+        const baseIN=hRange[0].inrVal, baseUS=hRange[0].usdVal;
+        out['PORT_IN']=hRange.map(h=>({date:h.date,pct:baseIN?(h.inrVal/baseIN-1)*100:0}));
+        out['PORT_US']=hRange.map(h=>({date:h.date,pct:baseUS?(h.usdVal/baseUS-1)*100:0}));
+      }
+    }
     return out;
-  },[benchData]);
+  },[benchData, history]);
 
   // SVG chart — include portfolio returns in the Y-axis range
   const allSeries=Object.values(normalized);
-  const extraPcts=[inReturn,usReturn].filter(v=>v!=null);
-  const allPcts=[...allSeries.flatMap(s=>s.map(d=>d.pct)).filter(Boolean),...extraPcts];
-  const minP=Math.min(...allPcts,-5),maxP=Math.max(...allPcts,5);
+  const allPcts=allSeries.flatMap(s=>s.map(d=>d.pct)).filter(v=>v!=null&&!isNaN(v));
+  const minP=allPcts.length?Math.min(...allPcts,-5):-5,maxP=allPcts.length?Math.max(...allPcts,5):5;
   const range_=maxP-minP||10;
   const dates=allSeries[0]?.map(d=>d.date)||[];
   const VW=700,VH=200,PAD={t:16,r:16,b:32,l:52};
   const W=VW-PAD.l-PAD.r,H=VH-PAD.t-PAD.b;
-  const xOf=i=>PAD.l+(i/(dates.length-1||1))*W;
+  const xOf=i=>PAD.l+(dates.length>1?(i/(dates.length-1))*W:W);
   const yOf=p=>PAD.t+H-((p-minP)/range_)*H;
   const yZero=yOf(0);
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Benchmark Comparison</div>
           <div style={{fontSize:13,color:T.text3}}>Index performance vs your portfolio period</div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          {RANGES.map(r=>(
-            <button key={r.v} onClick={()=>setRange(r.v)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${range===r.v?T.accent:T.border2}`,background:range===r.v?T.accentBg:'transparent',color:range===r.v?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:range===r.v?700:400,transition:'all .12s'}}>{r.l}</button>
-          ))}
-          <NvBtn onClick={fetchBench} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {RANGES.map(r=>(
+              <button key={r.v} onClick={()=>setRange(r.v)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${range===r.v?T.accent:T.border2}`,background:range===r.v?T.accentBg:'transparent',color:range===r.v?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:range===r.v?700:400,transition:'all .12s'}}>{r.l}</button>
+            ))}
+            <NvBtn onClick={fetchBench} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
       </div>
 
@@ -627,20 +623,33 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
               const path=s.map((d,i)=>`${i===0?'M':'L'}${xOf(i).toFixed(1)},${yOf(d.pct).toFixed(1)}`).join(' ');
               return<path key={b.sym} d={path} fill="none" stroke={b.color} strokeWidth="2"/>;
             })}
-            {/* Portfolio return lines (dashed) */}
-            {inReturn!=null&&dates.length>0&&(
-              <g>
-                <line x1={PAD.l} y1={yOf(inReturn)} x2={PAD.l+W} y2={yOf(inReturn)} stroke="#ff9800" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.8"/>
-                <rect x={PAD.l+W-78} y={yOf(inReturn)-8} width={76} height={16} rx={3} fill="#ff9800" opacity="0.15"/>
-                <text x={PAD.l+W-4} y={yOf(inReturn)+4} fontSize={9} fill="#ff9800" fontFamily="inherit" textAnchor="end" fontWeight="700">🇮🇳 {inReturn>=0?'+':''}{inReturn.toFixed(1)}%</text>
-              </g>
+            {normalized['PORT_IN']?.length>0&&(
+              <>
+                {normalized['PORT_IN'].length>1 ? (
+                  <path d={normalized['PORT_IN'].map((d,i)=>{
+                    const idx=dates.indexOf(d.date);
+                    return `${i===0?'M':'L'}${xOf(idx!==-1?idx:i).toFixed(1)},${yOf(d.pct).toFixed(1)}`;
+                  }).join(' ')} fill="none" stroke="#ff9800" strokeWidth="2" strokeDasharray="5 3"/>
+                ) : null}
+                {normalized['PORT_IN'].map(d=>{
+                  const idx=dates.indexOf(d.date);
+                  return <circle key={d.date} cx={xOf(idx!==-1?idx:0)} cy={yOf(d.pct)} r="3" fill="#ff9800" />;
+                })}
+              </>
             )}
-            {usReturn!=null&&dates.length>0&&(
-              <g>
-                <line x1={PAD.l} y1={yOf(usReturn)} x2={PAD.l+W} y2={yOf(usReturn)} stroke="#00b4d8" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.8"/>
-                <rect x={PAD.l+4} y={yOf(usReturn)-8} width={76} height={16} rx={3} fill="#00b4d8" opacity="0.15"/>
-                <text x={PAD.l+8} y={yOf(usReturn)+4} fontSize={9} fill="#00b4d8" fontFamily="inherit" fontWeight="700">🇺🇸 {usReturn>=0?'+':''}{usReturn.toFixed(1)}%</text>
-              </g>
+            {normalized['PORT_US']?.length>0&&(
+              <>
+                {normalized['PORT_US'].length>1 ? (
+                  <path d={normalized['PORT_US'].map((d,i)=>{
+                    const idx=dates.indexOf(d.date);
+                    return `${i===0?'M':'L'}${xOf(idx!==-1?idx:i).toFixed(1)},${yOf(d.pct).toFixed(1)}`;
+                  }).join(' ')} fill="none" stroke="#00b4d8" strokeWidth="2" strokeDasharray="5 3"/>
+                ) : null}
+                {normalized['PORT_US'].map(d=>{
+                  const idx=dates.indexOf(d.date);
+                  return <circle key={d.date} cx={xOf(idx!==-1?idx:0)} cy={yOf(d.pct)} r="3" fill="#00b4d8" />;
+                })}
+              </>
             )}
             {/* X axis dates */}
             {dates.filter((_,i)=>i%Math.max(1,Math.floor(dates.length/6))===0).map((d,i)=>{
@@ -654,8 +663,14 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
                 <rect x={Math.min(xOf(hover)+8,VW-130)} y={PAD.t+4} width={135} height={(BENCHES.length+(inReturn!=null?1:0)+(usReturn!=null?1:0))*18+20} rx={4} fill={T.surface2} stroke={T.border2} strokeWidth="0.8"/>
                 <text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+16} fontSize={8} fill={T.text3} fontFamily="inherit">{new Date(dates[hover]).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</text>
                 {BENCHES.map((b,i)=>{const s=normalized[b.sym];const pt=s?.[hover];return pt?<text key={b.sym} x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+i*18} fontSize={10} fill={b.color} fontFamily="inherit" fontWeight="700">{b.label}: {pt.pct>=0?'+':''}{pt.pct.toFixed(2)}%</text>:null;})}
-                {inReturn!=null&&<text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+BENCHES.length*18} fontSize={10} fill="#ff9800" fontFamily="inherit" fontWeight="700">🇮🇳 Portfolio: {inReturn>=0?'+':''}{inReturn.toFixed(2)}%</text>}
-                {usReturn!=null&&<text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+(BENCHES.length+(inReturn!=null?1:0))*18} fontSize={10} fill="#00b4d8" fontFamily="inherit" fontWeight="700">🇺🇸 Portfolio: {usReturn>=0?'+':''}{usReturn.toFixed(2)}%</text>}
+                {normalized['PORT_IN'] && (()=>{
+                  const pt=normalized['PORT_IN'].find(x=>x.date===dates[hover]);
+                  return pt?<text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+BENCHES.length*18} fontSize={10} fill="#ff9800" fontFamily="inherit" fontWeight="700">🇮🇳 Portfolio: {pt.pct>=0?'+':''}{pt.pct.toFixed(2)}%</text>:null;
+                })()}
+                {normalized['PORT_US'] && (()=>{
+                  const pt=normalized['PORT_US'].find(x=>x.date===dates[hover]);
+                  return pt?<text x={Math.min(xOf(hover)+14,VW-124)} y={PAD.t+30+(BENCHES.length+1)*18} fontSize={10} fill="#00b4d8" fontFamily="inherit" fontWeight="700">🇺🇸 Portfolio: {pt.pct>=0?'+':''}{pt.pct.toFixed(2)}%</text>:null;
+                })()}
               </g>
             )}
           </svg>
@@ -669,18 +684,18 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
               {last!=null&&<span style={{fontSize:12,fontWeight:700,color:last>=0?T.success:T.danger}}>{last>=0?'+':''}{last.toFixed(2)}%</span>}
             </div>
           );})}
-          {inReturn!=null&&(
+          {normalized['PORT_IN']?.length>0&&(
             <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <div style={{width:20,height:2,background:'#ff9800',borderRadius:1,opacity:.5}}/>
+              <div style={{width:20,height:2,background:'#ff9800',borderRadius:1,border:'1px dashed #ff9800'}}/>
               <span style={{fontSize:12,color:T.text2}}>🇮🇳 Portfolio</span>
-              <span style={{fontSize:12,fontWeight:700,color:inReturn>=0?T.success:T.danger}}>{inReturn>=0?'+':''}{inReturn.toFixed(2)}%</span>
+              {(()=>{const s=normalized['PORT_IN'];const last=s[s.length-1]?.pct;return last!=null&&<span style={{fontSize:12,fontWeight:700,color:last>=0?T.success:T.danger}}>{last>=0?'+':''}{last.toFixed(2)}%</span>;})()}
             </div>
           )}
-          {usReturn!=null&&(
+          {normalized['PORT_US']?.length>0&&(
             <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <div style={{width:20,height:2,background:'#00b4d8',borderRadius:1,opacity:.5}}/>
+              <div style={{width:20,height:2,background:'#00b4d8',borderRadius:1,border:'1px dashed #00b4d8'}}/>
               <span style={{fontSize:12,color:T.text2}}>🇺🇸 Portfolio</span>
-              <span style={{fontSize:12,fontWeight:700,color:usReturn>=0?T.success:T.danger}}>{usReturn>=0?'+':''}{usReturn.toFixed(2)}%</span>
+              {(()=>{const s=normalized['PORT_US'];const last=s[s.length-1]?.pct;return last!=null&&<span style={{fontSize:12,fontWeight:700,color:last>=0?T.success:T.danger}}>{last>=0?'+':''}{last.toFixed(2)}%</span>;})()}
             </div>
           )}
         </div>
@@ -732,6 +747,7 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
           </table>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -743,7 +759,7 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr}) {
 // Fetches key fundamentals from Yahoo v10 quoteSummary for all portfolio stocks.
 // Links to Screener.in (Indian) and Yahoo Finance (US).
 
-export function ScreenerModule({T,holdings,prices}) {
+export function ScreenerModule({T,holdings,prices,onClose}) {
   const [data,setData]=useState({});
   const [loading,setLoading]=useState(false);
   const [progress,setProgress]=useState(0);
@@ -882,17 +898,21 @@ export function ScreenerModule({T,holdings,prices}) {
   const fmtP=(v)=>v==null?'—':`${v.toFixed(1)}%`;
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Screener</div>
           <div style={{fontSize:13,color:T.text3}}>Fundamentals for {holdings.length} holdings · Click any stock to open on {filter==='US'?'Yahoo Finance':'Screener.in'}</div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          {['all','IN','US'].map(f=>(
-            <button key={f} onClick={()=>setFilter(f)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${filter===f?T.accent:T.border2}`,background:filter===f?T.accentBg:'transparent',color:filter===f?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:filter===f?700:400}}>{f==='all'?'All':f==='IN'?'🇮🇳 Indian':'🇺🇸 US'}</button>
-          ))}
-          <NvBtn onClick={fetchAll} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {['all','IN','US'].map(f=>(
+              <button key={f} onClick={()=>setFilter(f)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${filter===f?T.accent:T.border2}`,background:filter===f?T.accentBg:'transparent',color:filter===f?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:filter===f?700:400}}>{f==='all'?'All':f==='IN'?'🇮🇳 Indian':'🇺🇸 US'}</button>
+            ))}
+            <NvBtn onClick={fetchAll} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
       </div>
 
@@ -973,6 +993,7 @@ export function ScreenerModule({T,holdings,prices}) {
         </div>
         )}
       </div>
+      </div>
     </div>
   );
 }
@@ -983,7 +1004,7 @@ export function ScreenerModule({T,holdings,prices}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Fetches latest news from Yahoo Finance for portfolio stocks + market indices.
 
-export function NewsModule({T,holdings}) {
+export function NewsModule({T,holdings,onClose}) {
   const [news,setNews]=useState([]);
   const [loading,setLoading]=useState(false);
   const [filter,setFilter]=useState('all'); // all | portfolio | market
@@ -1044,17 +1065,21 @@ export function NewsModule({T,holdings}) {
   };
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>News Feed</div>
           <div style={{fontSize:13,color:T.text3}}>{filtered.length} articles · Portfolio stocks + market news</div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          {[['all','All'],['portfolio','Portfolio'],['market','Market']].map(([k,l])=>(
-            <button key={k} onClick={()=>setFilter(k)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${filter===k?T.accent:T.border2}`,background:filter===k?T.accentBg:'transparent',color:filter===k?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:filter===k?700:400}}>{l}</button>
-          ))}
-          <NvBtn onClick={fetchNews} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {[['all','All'],['portfolio','Portfolio'],['market','Market']].map(([k,l])=>(
+              <button key={k} onClick={()=>setFilter(k)} style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${filter===k?T.accent:T.border2}`,background:filter===k?T.accentBg:'transparent',color:filter===k?T.accent:T.text2,cursor:'pointer',fontSize:12,fontWeight:filter===k?700:400}}>{l}</button>
+            ))}
+            <NvBtn onClick={fetchNews} disabled={loading} T={T}><Ic.Refresh s={loading}/></NvBtn>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
       </div>
 
@@ -1076,6 +1101,7 @@ export function NewsModule({T,holdings}) {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -1085,24 +1111,26 @@ export function NewsModule({T,holdings}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Auto-snapshots on every price refresh. Storage: pm_portfolio_history
 
-export function HistoryModule({T,rows}) {
-  const [history,setHistory]=useState(()=>{try{return JSON.parse(getItemSync('pm_portfolio_history')||'[]');}catch{return [];}});
+export function HistoryModule({T,rows,history,setHistory,onClose}) {
   const svgRef=useRef();
   const [hover,setHover]=useState(null);
 
-  // Called externally on each price refresh to save snapshot
+  // Called externally on each price refresh to save snapshot (throttled to reduce disk IO)
   useEffect(()=>{
     if(!rows.length)return;
-    const inrVal=rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+(r.curValue??r.invested),0);
-    const usdVal=rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+(r.curValue??r.invested),0);
+    const inrVal=Math.round(rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+(r.curValue??r.invested),0));
+    const usdVal=Math.round(rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+(r.curValue??r.invested),0));
     const today=new Date().toISOString().slice(0,10);
+    
     setHistory(prev=>{
       const existing=prev.find(p=>p.date===today);
-      let updated;
-      if(existing){updated=prev.map(p=>p.date===today?{...p,inrVal,usdVal}:p);}
-      else{updated=[...prev,{date:today,inrVal,usdVal}].slice(-365);}
-      setItemSync('pm_portfolio_history',JSON.stringify(updated));
-      return updated;
+      if(existing){
+        // Only update if value changed by more than 0.1% to save performance/disk
+        const diff=Math.abs(existing.inrVal-inrVal)/Math.max(existing.inrVal,1);
+        if(diff < 0.001) return prev; 
+        return prev.map(p=>p.date===today?{...p,inrVal,usdVal}:p);
+      }
+      return [...prev,{date:today,inrVal,usdVal}].slice(-365);
     });
   },[rows]);
 
@@ -1116,9 +1144,11 @@ export function HistoryModule({T,rows}) {
   const yOf=v=>PAD.t+H-((v-minV)/rangeV)*H;
 
   if(!data.length)return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{fontSize:20,fontWeight:700,color:T.text}}>Portfolio History</div>
       <div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No history yet. Snapshots are saved automatically each time prices refresh. Come back tomorrow!</div>
+      </div>
     </div>
   );
 
@@ -1130,15 +1160,19 @@ export function HistoryModule({T,rows}) {
   const gainPct=(gain/vals[0])*100;
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Portfolio History</div>
           <div style={{fontSize:13,color:T.text3}}>{data.length} daily snapshots</div>
         </div>
-        <div style={{display:'flex',gap:16}}>
-          <div style={{textAlign:'right'}}><div style={{fontSize:11,color:T.text3}}>Current Value</div><div style={{fontSize:18,fontWeight:700,color:T.text}}>₹{vals[vals.length-1].toLocaleString('en-IN',{maximumFractionDigits:0})}</div></div>
-          <div style={{textAlign:'right'}}><div style={{fontSize:11,color:T.text3}}>Since Start</div><div style={{fontSize:18,fontWeight:700,color:lc}}>{gain>=0?'+':'−'}₹{Math.abs(gain).toLocaleString('en-IN',{maximumFractionDigits:0})} ({gainPct>=0?'+':''}{gainPct.toFixed(2)}%)</div></div>
+        <div style={{display:'flex',gap:16,alignItems:'center'}}>
+          <div style={{display:'flex',gap:16}}>
+            <div style={{textAlign:'right'}}><div style={{fontSize:11,color:T.text3}}>Current Value</div><div style={{fontSize:18,fontWeight:700,color:T.text}}>₹{vals[vals.length-1].toLocaleString('en-IN',{maximumFractionDigits:0})}</div></div>
+            <div style={{textAlign:'right'}}><div style={{fontSize:11,color:T.text3}}>Since Start</div><div style={{fontSize:18,fontWeight:700,color:lc}}>{gain>=0?'+':'−'}₹{Math.abs(gain).toLocaleString('en-IN',{maximumFractionDigits:0})} ({gainPct>=0?'+':''}{gainPct.toFixed(2)}%)</div></div>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
       </div>
 
@@ -1185,6 +1219,7 @@ export function HistoryModule({T,rows}) {
           </table>
         </div>
       </div>
+      </div>
     </div>
   );
 }
@@ -1193,7 +1228,7 @@ export function HistoryModule({T,rows}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── MODULE: WATCHLIST ─────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
-export function WatchlistModule({T,usdInr}) {
+export function WatchlistModule({T,usdInr,onClose}) {
   const [items,setItems]=useState(()=>{try{return JSON.parse(getItemSync('pm_watchlist')||'[]');}catch{return [];}});
   const [wPrices,setWPrices]=useState({});
   const [wLoading,setWLoading]=useState(false);
@@ -1245,17 +1280,21 @@ export function WatchlistModule({T,usdInr}) {
   const tdS={padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontSize:12,whiteSpace:'nowrap'};
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Watchlist</div>
           <div style={{fontSize:13,color:T.text3}}>{items.length} stock{items.length!==1?'s':''} tracked</div>
         </div>
-        <div style={{display:'flex',gap:8}}>
-          <NvBtn onClick={csvExport} T={T} disabled={!items.length}><Ic.Download/> Export</NvBtn>
-          <NvBtn onClick={fetchWPrices} disabled={wLoading} T={T}><Ic.Refresh s={wLoading}/> Refresh</NvBtn>
-          <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Stock</NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',gap:8}}>
+            <NvBtn onClick={csvExport} T={T} disabled={!items.length}><Ic.Download/> Export</NvBtn>
+            <NvBtn onClick={fetchWPrices} disabled={wLoading} T={T}><Ic.Refresh s={wLoading}/> Refresh</NvBtn>
+            <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Stock</NvBtn>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
       </div>
 
@@ -1362,6 +1401,7 @@ export function WatchlistModule({T,usdInr}) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -1369,7 +1409,7 @@ export function WatchlistModule({T,usdInr}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── MODULE: BUY LOTS TRACKER ──────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
-export function LotsModule({T,prices}) {
+export function LotsModule({T,prices,onClose}) {
   const [lots,setLots]=useState(()=>{try{return JSON.parse(getItemSync('pm_lots')||'[]');}catch{return [];}});
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({symbol:'',name:'',qty:'',buyPrice:'',buyDate:new Date().toISOString().slice(0,10),currency:'INR',notes:''});
@@ -1412,17 +1452,21 @@ export function LotsModule({T,prices}) {
   const tdS={padding:'9px 12px',borderBottom:`1px solid ${T.border}`,fontSize:12,whiteSpace:'nowrap'};
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Buy Lots Tracker</div>
           <div style={{fontSize:13,color:T.text3}}>{lots.length} lot{lots.length!==1?'s':''} across {grouped.length} stock{grouped.length!==1?'s':''}</div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <div style={{position:'relative'}}><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:T.text3,pointerEvents:'none'}}><Ic.Search/></span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter…" style={{...INP,width:140,paddingLeft:30}}/></div>
-          <NvBtn onClick={csvExport} T={T} disabled={!lots.length}><Ic.Download/> Export</NvBtn>
-          <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Lot</NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <div style={{position:'relative'}}><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:T.text3,pointerEvents:'none'}}><Ic.Search/></span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter…" style={{...INP,width:140,paddingLeft:30}}/></div>
+            <NvBtn onClick={csvExport} T={T} disabled={!lots.length}><Ic.Download/> Export</NvBtn>
+            <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> Add Lot</NvBtn>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
       </div>
 
@@ -1531,6 +1575,7 @@ export function LotsModule({T,prices}) {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -1538,7 +1583,7 @@ export function LotsModule({T,prices}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── MODULE: TAX P&L (STCG / LTCG) ────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
-export function TaxModule({T,prices}) {
+export function TaxModule({T,prices,onClose}) {
   const [lots,setLots]=useState(()=>{try{return JSON.parse(getItemSync('pm_lots')||'[]');}catch{return [];}});
   const [soldLots,setSoldLots]=useState(()=>{try{return JSON.parse(getItemSync('pm_sold_lots')||'[]');}catch{return [];}});
   const [showSell,setShowSell]=useState(null); // lot id
@@ -1601,13 +1646,19 @@ export function TaxModule({T,prices}) {
   );
 
   return(
-    <div style={{flex:1,overflowY:'auto',padding:24,display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+      <div style={{padding:24,display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:4}}>Tax P&L — FY 2025-26</div>
           <div style={{fontSize:13,color:T.text3}}>STCG 15% · LTCG 10% (above ₹1L) · Holding &lt; 12 months = STCG</div>
         </div>
-        <NvBtn onClick={csvExport} disabled={!soldLots.length} T={T}><Ic.Download/> Export ITR Data</NvBtn>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',gap:12,alignItems:'center'}}>
+            <NvBtn onClick={csvExport} T={T} disabled={!soldLots.length}><Ic.Download/> Export FY 25-26</NvBtn>
+          </div>
+          {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -1710,6 +1761,7 @@ export function TaxModule({T,prices}) {
 
       {!lots.length&&!soldLots.length&&<div style={{background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`,padding:40,textAlign:'center',color:T.text3}}>No lots recorded. Add buy transactions in the Lots Tracker to compute tax liability.</div>}
       <div style={{fontSize:11,color:T.text3,fontStyle:'italic',padding:'0 4px'}}>⚠ Estimates only. Tax rates: Equity STCG 15%, LTCG 10% (above ₹1L exemption). Consult a CA for ITR filing.</div>
+      </div>
     </div>
   );
 }

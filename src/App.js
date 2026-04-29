@@ -6,6 +6,7 @@ import { Ic } from './icons';
 import { callGroq, callGemini, callAI, extractJSON } from './ai';
 import { useYahooSearch, useNotes } from './hooks';
 import { getItemSync, setItemSync } from './storage';
+import './mobile.css';
 
 // ── ERROR BOUNDARY ────────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -184,6 +185,30 @@ function PortfolioTabs({portfolios,activeId,onSwitch,onAdd,onRename,onDelete,T})
 
 // useNotes: imported from ./hooks
 
+function BottomNav({activeId, activeModule, onSwitch, T, NAV, MOD_NAV}) {
+  const items = [
+    {id: 'IN', label: 'Indian', icon: <Ic.India/>},
+    {id: 'US', label: 'US', icon: <Ic.US/>},
+    {id: 'watchlist', label: 'Watch', icon: '👁'},
+    {id: 'news', label: 'News', icon: '📰'},
+    {id: 'alerts', label: 'Alerts', icon: '🔔'},
+  ];
+  return (
+    <div className="bottom-nav" style={{height:60, background:T.sidebar, borderTop:`1px solid ${T.border}`, display:'flex', alignItems:'center', justifyContent:'space-around', position:'fixed', bottom:0, left:0, right:0, zIndex:1000}}>
+      {items.map(item => {
+        const isActive = (item.id === 'IN' || item.id === 'US') ? (!activeModule && activeId === item.id) : (activeModule === item.id);
+        const color = isActive ? T.accent : T.text3;
+        return (
+          <div key={item.id} onClick={() => onSwitch(item.id)} style={{display:'flex', flexDirection:'column', alignItems:'center', gap:4, cursor:'pointer', color}}>
+            <div style={{fontSize:18, display:'flex'}}>{item.icon}</div>
+            <div style={{fontSize:10, fontWeight:isActive?700:400}}>{item.label}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 import { NotesModule, AlertsModule, SectorModule, BenchmarkModule, ScreenerModule, NewsModule, HistoryModule, WatchlistModule } from './modules';
 function AppInner() {
   const [tweaks,setTweaks]=useState(()=>{try{const s=getItemSync('pm_tweaks');return s?{...TWEAK_DEF,...JSON.parse(s)}:TWEAK_DEF;}catch{return TWEAK_DEF;}});
@@ -215,6 +240,10 @@ function AppInner() {
   );
   const [aiAnalyses,setAiAnalyses]=useState({});
   const [usdInr,setUsdInr]=useState(null); // live exchange rate
+  const [history,setHistory]=useState(()=>{try{return JSON.parse(getItemSync('pm_portfolio_history')||'[]');}catch{return [];}});
+  const isElectron = !!window.electronAPI;
+  const isCapacitor = !!window.Capacitor && !isElectron;
+  const isMobile = window.innerWidth < 768;
 
   // Fetch USD/INR rate from Yahoo Finance
   useEffect(()=>{
@@ -253,6 +282,7 @@ function AppInner() {
   useEffect(()=>{setItemSync('pm_sidebar_collapsed',JSON.stringify(sidebarCollapsed));},[sidebarCollapsed]);
   useEffect(()=>{setItemSync('pm_right_sidebar_collapsed',JSON.stringify(rightSidebarCollapsed));},[rightSidebarCollapsed]);
   useEffect(()=>{setItemSync('pm_tweaks',JSON.stringify(tweaks));},[tweaks]);
+  useEffect(()=>{setItemSync('pm_portfolio_history',JSON.stringify(history));},[history]);
   useEffect(()=>{if(window.electronAPI?.onUpdateAvailable)window.electronAPI.onUpdateAvailable(()=>setUpdateAvail(true));},[]);
   const fetchPrices=useCallback(async()=>{
     if(!holdings.length)return;setLoading(true);setError(null);const out={};
@@ -406,6 +436,13 @@ Respond ONLY as a JSON object with these keys:
       return{...h,currency:cur,curPrice:cp,invested:inv,curValue:cv,gain:cv?cv-inv:null,pfName:p.name};
     }));
   },[portfolios,prices]);
+
+  const uniqueHoldings=useMemo(()=>{
+    const map=new Map();
+    allRows.forEach(h=>{ if(!map.has(h.symbol)) map.set(h.symbol, h); });
+    return Array.from(map.values());
+  },[allRows]);
+
   const rows=useMemo(()=>holdings.map(h=>{const p=prices[h.symbol],cur=p?.currency??(isUS(h.symbol)?'USD':'INR'),cp=p?.current??null;const inv=parseFloat((h.buyPrice*h.qty).toFixed(8)),cv=cp!=null?parseFloat((cp*h.qty).toFixed(2)):null;const g=cv!=null?cv-inv:null,gp=g!=null?(g/inv)*100:null,dc=p?((p.current-p.prev)/p.prev)*100:null,dp=dc!=null&&cv!=null?(dc/100)*cv:null;return{...h,currency:cur,curPrice:cp,invested:inv,curValue:cv,gain:g,gainPct:gp,dayChange:dc,dayPL:dp};}),[holdings,prices]);
   const inRows=useMemo(()=>rows.filter(r=>r.currency==='INR'),[rows]);
   const usRows=useMemo(()=>rows.filter(r=>r.currency==='USD'),[rows]);
@@ -418,7 +455,6 @@ Respond ONLY as a JSON object with these keys:
   const activeStock=mainTab.startsWith('stock:')?mainTab.slice(6):null;
   const sharedProps={fetchPrices,loading,error,lastUpdated,onSaveUnpledged:saveUnpledgedQty,onRemove:removeHolding,compact:tweaks.compactRows,addHolding,T};
 
-  // FIX #6: SidebarContent extracted — receives T, targets, activePf, tweaks as props
   const SidebarContent=({sRows,pie,currency,usdInr,invAmt,totalAmt,gain,dayGain,offset})=>{
     return(
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -490,8 +526,8 @@ Respond ONLY as a JSON object with these keys:
       `}</style>
 
       {/* ── Title Bar ── */}
-      <div style={{background:T.sidebar,height:64,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 20px',borderBottom:`1px solid ${T.border}`,WebkitAppRegion:'drag',position:'relative',zIndex:100}}>
-        <div style={{display:'flex',alignItems:'center',gap:12,WebkitAppRegion:'no-drag'}}>
+      <div className="title-bar" style={{background:T.sidebar,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 20px',borderBottom:`1px solid ${T.border}`,WebkitAppRegion:isCapacitor?'none':'drag',position:'relative',zIndex:100}}>
+        <div className="title-bar-logo" style={{display:'flex',alignItems:'center',gap:12,WebkitAppRegion:'no-drag'}}>
           <button onClick={()=>setSidebarCollapsed(v=>!v)} style={{background:'none',border:'none',color:T.text3,cursor:'pointer',padding:4,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:4,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.color=T.accent} onMouseLeave={e=>e.currentTarget.style.color=T.text3}>
             <Ic.Menu/>
           </button>
@@ -505,7 +541,7 @@ Respond ONLY as a JSON object with these keys:
         </div>
 
         {/* P&L pills */}
-        <div style={{display:'flex',gap:10,alignItems:'center',WebkitAppRegion:'no-drag'}}>
+        <div className="pnl-pills" style={{display:'flex',gap:10,alignItems:'center',WebkitAppRegion:'no-drag'}}>
           {inRows.length>0&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'5px 12px',background:T.surface2,borderRadius:8,border:`1px solid ${T.border}`}}>
             <span style={{fontSize:12}}>🇮🇳</span>
             <span style={{fontSize:13,fontWeight:700,color:gColor(gainIN,T)}}>{gainIN>=0?'+':'−'}₹{Math.abs(gainIN).toLocaleString('en-IN',{maximumFractionDigits:0})}</span>
@@ -527,7 +563,7 @@ Respond ONLY as a JSON object with these keys:
         </div>
 
         {/* Controls */}
-        <div style={{display:'flex',gap:6,alignItems:'center',WebkitAppRegion:'no-drag'}}>
+        <div className="title-bar-controls" style={{display:'flex',gap:6,alignItems:'center',WebkitAppRegion:'no-drag'}}>
           {updateAvail&&<NvBtn onClick={()=>window.electronAPI?.installUpdate()} variant="primary" T={T}><Ic.Update/> Update Ready</NvBtn>}
           <button onClick={()=>setTweaks(p=>({...p,darkMode:!p.darkMode}))} style={{padding:'7px 8px',borderRadius:6,border:`1px solid ${T.border}`,background:'transparent',color:T.text3,cursor:'pointer',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}>
             {tweaks.darkMode?<Ic.Sun/>:<Ic.Moon/>}
@@ -538,8 +574,8 @@ Respond ONLY as a JSON object with these keys:
           <button onClick={()=>setRightSidebarCollapsed(v=>!v)} style={{padding:'7px 8px',borderRadius:6,border:`1px solid ${T.border}`,background:'transparent',color:T.text3,cursor:'pointer',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}>
             <Ic.Menu/>
           </button>
-          <div style={{display:'flex',marginLeft:4,gap:1}}>
-            {[{icon:<Ic.Minimize/>,fn:()=>window.electronAPI?.minimize(),d:false},{icon:<Ic.Maximize/>,fn:()=>window.electronAPI?.maximize(),d:false},{icon:<Ic.X/>,fn:()=>window.electronAPI?.close(),d:true}].map(({icon,fn,d},i)=>(
+          <div style={{display:isElectron?'flex':'none',marginLeft:4,gap:1}}>
+            {[{icon:<Ic.Minimize size={14}/>,fn:()=>window.electronAPI?.minimize(),d:false},{icon:<Ic.Maximize size={14}/>,fn:()=>window.electronAPI?.maximize(),d:false},{icon:<Ic.X size={14}/>,fn:()=>window.electronAPI?.close(),d:true}].map(({icon,fn,d},i)=>(
               <button key={i} onClick={fn} style={{width:32,height:32,background:'transparent',border:'none',cursor:'pointer',color:T.text3,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:6,transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.background=d?'rgba(244,67,54,.2)':T.surface3;e.currentTarget.style.color=d?T.danger:T.text;}} onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color=T.text3;}}>{icon}</button>
             ))}
           </div>
@@ -547,7 +583,7 @@ Respond ONLY as a JSON object with these keys:
       </div>
 
       {/* ── Body: Left Nav + Content ── */}
-      <div style={{flex:1,overflow:'hidden',display:'flex'}}>
+      <div className="main-container" style={{flex:1,overflow:'hidden',display:'flex',minHeight:0}}>
 
         {/* Left Sidebar */}
         <div style={{width:sidebarCollapsed?0:152,background:T.sidebar,borderRight:sidebarCollapsed?'none':`1px solid ${T.border}`,display:'flex',flexDirection:'column',flexShrink:0,overflow:'hidden',transition:'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)'}}>
@@ -567,12 +603,18 @@ Respond ONLY as a JSON object with these keys:
           {/* Module nav */}
           <div style={{height:1,background:T.border,margin:'8px 12px 4px'}}/>
           <div style={{padding:'8px 12px 4px',fontSize:10,fontWeight:700,color:T.text3,textTransform:'uppercase',letterSpacing:'.08em'}}>Tools</div>
-          {MOD_NAV.map(mod=>{const isA=activeModule===mod.id;return(
-            <button key={mod.id} onClick={()=>{setActiveModule(isA?null:mod.id);}} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 14px',background:isA?`${mod.color}18`:'transparent',border:'none',borderLeft:isA?`3px solid ${mod.color}`:'3px solid transparent',cursor:'pointer',width:'100%',textAlign:'left',color:isA?mod.color:T.text2,transition:'all .15s',marginBottom:2}}>
-              <span style={{fontSize:14}}>{mod.icon}</span>
-              <span style={{fontSize:12,fontWeight:isA?600:400}}>{mod.label}</span>
-            </button>
-          );})}
+          {MOD_NAV.map(mod=>{
+            const isA=activeModule===mod.id;
+            return(
+              <div key={mod.id} style={{position:'relative'}}>
+                <button onClick={()=>{setActiveModule(isA?null:mod.id);}} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center',gap:4,padding:'12px 4px',background:isA?T.accentBg:'transparent',border:'none',borderRadius:8,color:isA?T.accent:T.text3,cursor:'pointer',transition:'all .15s',position:'relative'}} onMouseEnter={e=>{if(!isA)e.currentTarget.style.background=T.surface4;}} onMouseLeave={e=>{if(!isA)e.currentTarget.style.background='transparent';}}>
+                  <span style={{fontSize:14}}>{mod.icon}</span>
+                  <span style={{fontSize:12,fontWeight:isA?600:400}}>{mod.label}</span>
+                </button>
+                {isA&&<button onClick={(e)=>{e.stopPropagation();setActiveModule(null);}} style={{position:'absolute',top:4,right:4,background:T.surface4,border:`1px solid ${T.accent}`,color:T.accent,cursor:'pointer',padding:4,display:'flex',borderRadius:6,boxShadow:'0 2px 8px rgba(0,0,0,0.2)',zIndex:10}} onMouseEnter={e=>e.currentTarget.style.background=T.accentBg} onMouseLeave={e=>e.currentTarget.style.background=T.surface4}><Ic.X size={14}/></button>}
+              </div>
+            );
+          })}
           <div style={{height:1,background:T.border,margin:'4px 12px 8px'}}/>
 
           {/* Stock tabs in sidebar */}
@@ -595,14 +637,14 @@ Respond ONLY as a JSON object with these keys:
         </div>
 
         {/* Main Content */}
-        <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
-          {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr}/>}
-          {activeModule==='notes'&&<NotesModule T={T} holdings={holdings}/>}
-          {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={holdings}/>}
-          {activeModule==='sectors'&&<SectorModule T={T} rows={allRows} prices={prices} usdInr={usdInr}/>}
-          {activeModule==='news'&&<NewsModule T={T} holdings={holdings}/>}
-          {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr}/>}
-          {activeModule==='history'&&<HistoryModule T={T} rows={rows}/>}
+        <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
+          {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
+          {activeModule==='notes'&&<NotesModule T={T} holdings={holdings} onClose={()=>setActiveModule(null)}/>}
+          {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
+          {activeModule==='sectors'&&<SectorModule T={T} rows={allRows} prices={prices} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
+          {activeModule==='news'&&<NewsModule T={T} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
+          {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr} history={history} onClose={()=>setActiveModule(null)}/>}
+          {activeModule==='history'&&<HistoryModule T={T} rows={allRows} history={history} setHistory={setHistory} onClose={()=>setActiveModule(null)}/>}
           {!activeModule&&activeStock?(
             <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
           ):(!activeModule&&(
@@ -610,12 +652,12 @@ Respond ONLY as a JSON object with these keys:
               {/* Portfolio sub-tabs */}
               <PortfolioTabs portfolios={portfolios} activeId={activeId} onSwitch={setActiveId} onAdd={addPortfolio} onRename={renamePortfolio} onDelete={deletePortfolio} T={T}/>
               {/* Main grid */}
-              <div style={{flex:1,overflow:'hidden',display:'grid',gridTemplateColumns:rightSidebarCollapsed?'1fr 0px':'minmax(0,1fr) clamp(220px,20vw,280px)',gap:0,transition:'grid-template-columns 0.25s cubic-bezier(0.4, 0, 0.2, 1)'}}>
+              <div className="main-grid" style={{flex:1,overflow:'hidden',display:'grid',gridTemplateColumns:rightSidebarCollapsed?'1fr 0px':'minmax(0,1fr) clamp(220px,20vw,280px)',gap:0,transition:'grid-template-columns 0.25s cubic-bezier(0.4, 0, 0.2, 1)'}}>
                 <div style={{overflowY:'auto',padding:20}}>
                   {mainTab==='IN'&&<Section title="Indian Equity" flag="🇮🇳" accent={T.inColor} rows={inRows} currency="INR" onImportCSV={()=>setImportModal('IN')} onRowClick={openStockTab} {...sharedProps}/>}
                   {mainTab==='US'&&<Section title="US Equity" flag="🇺🇸" accent={T.usColor} rows={usRows} currency="USD" usdInr={usdInr} onImportCSV={()=>setImportModal('US')} onRowClick={openStockTab} {...sharedProps}/>}
                 </div>
-                <div style={{overflowY:'auto',padding:rightSidebarCollapsed?0:'20px 16px 20px 0',borderLeft:rightSidebarCollapsed?'none':`1px solid ${T.border}`,overflow:'hidden',opacity:rightSidebarCollapsed?0:1,transition:'opacity 0.2s'}}>
+                <div className="right-sidebar" style={{overflowY:'auto',padding:rightSidebarCollapsed?0:'20px 16px 20px 0',borderLeft:rightSidebarCollapsed?'none':`1px solid ${T.border}`,overflow:'hidden',opacity:rightSidebarCollapsed?0:1,transition:'opacity 0.2s'}}>
                   <div style={{padding:'0 0 0 16px'}}>
                     {mainTab==='IN'&&<SidebarContent sRows={inRows} pie={inPie} currency="INR" invAmt={invIN} totalAmt={totalIN} gain={gainIN} dayGain={dayIN} offset={0}/>}
                     {mainTab==='US'&&<SidebarContent sRows={usRows} pie={usPie} currency="USD" usdInr={usdInr} invAmt={invUS} totalAmt={totalUS} gain={gainUS} dayGain={dayUS} offset={6}/>}
@@ -630,6 +672,7 @@ Respond ONLY as a JSON object with these keys:
       {showAISetup&&<AISetupModal onSave={saveAIKeys} T={T}/> }
       {showSettings&&<SettingsPanel tweaks={tweaks} onUpdate={(k,v)=>setTweaks(p=>({...p,[k]:v}))} onClose={()=>setShowSettings(false)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} onSaveAIKeys={saveAIKeys} T={T}/>}
       {importModal&&<CSVImportModal market={importModal} onImport={importHoldings} onClose={()=>setImportModal(null)} T={T}/>}
+      {isMobile && <BottomNav activeId={mainTab} activeModule={activeModule} onSwitch={(id) => {if(id==='IN'||id==='US'){setMainTab(id);setActiveModule(null);}else{setActiveModule(id);}}} T={T} NAV={NAV} MOD_NAV={MOD_NAV}/>}
     </div>
   );
 }

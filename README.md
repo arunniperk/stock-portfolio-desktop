@@ -64,7 +64,7 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 ## 📦 Installation
 
 ### For Users
-1. Download `Stock Portfolio Monitor Setup 4.5.2.exe` from Releases
+1. Download `Stock Portfolio Monitor Setup 4.6.0.exe` from Releases
 2. On first launch — enter Groq/Gemini keys or skip (Yahoo Finance only)
 
 ### For Developers
@@ -87,7 +87,7 @@ build-win.bat   # Run as Administrator
 
 ```
 C:\code\
-├── package.json       # v4.5.2, dependencies, build config
+├── package.json       # v4.6.0, dependencies, build config
 ├── vite.config.js
 ├── index.html         # CSP: Yahoo, Groq, Gemini, Yahoo CDN images
 ├── main.js            # Electron main + auto-updater
@@ -121,33 +121,31 @@ C:\code\
 
 | | |
 |---|---|
-| Version | 4.5.2 |
+| Version | 4.6.0 |
 | Author | Arun Verma (arunmcops@gmail.com) |
 | Repository | github.com/arunniperk/stock-portfolio-desktop |
 | Platform | Windows 10/11 (64-bit) |
 
 ---
 
-## 🔧 v4.5.2 Changelog
+## 🔧 v4.6.0 Changelog
 
 | Change | Description |
 |---|---|
-| 🔔 **Multi-Target Alerts** | Overhauled Alerts module to support dual targets (**Target 1** and **Target 2**). Sequential tracking, independent hit timestamps, and **inline editing** for triggered alerts to easily reset targets. |
-| ↔️ **Collapsible Sidebars** | Added toggle buttons to collapse both left and right sidebars independently. Main content area now expands to fill the screen. State persists across app launches. |
-| 📈 **Split Daily Snapshots** | History module now shows independent **IN Day Chg** and **US Day Chg** columns in the daily snapshot table for better market-specific tracking. |
-| 🏭 **Total Value in Sectors** | Sector Allocation header now displays the **Total Portfolio Value** in INR (calculated via live USD/INR exchange rates). |
-| 🧹 **Module Cleanup** | Removed "Buy Lots", "Tax P&L", and "Screener" modules to simplify the interface and focus on core portfolio management. |
-| 🛡️ **Improved Fetching** | Enhanced Yahoo Finance data retrieval with multi-server fallbacks and batched requests to prevent connection errors and rate limiting. |
+| 📈 **Dynamic Benchmarking** | Portfolio returns are now graphed as time-series paths alongside Nifty 50 and S&P 500. Automatic date synchronization ensures apples-to-apples performance comparison over any selected range. |
+| 🔔 **Alerts Refactor** | Streamlined alert creation with portfolio stock dropdowns. Removed redundant "DIR" columns and added bulk-delete capabilities per stock for cleaner management. |
+| ⚡ **Performance Boost** | Throttled history snapshots and optimized data memoization. App remains fluid even with massive portfolios by reducing disk IO and unnecessary re-renders. |
+| 🖱️ **Improved Scrolling** | Resolved vertical scroll issues in modules by implementing a more robust container architecture. Standardized window control icons for better UI consistency. |
+| 📅 **Weekly View** | Set default benchmark chart range to 'Current Week' (5D) for immediate focus on recent market movements. |
 
 ---
 
-## 🔄 Push to GitHub as v4.5.2
+## 🔄 Push to GitHub as v4.6.0
 
 ```cmd
-cd C:\code
 git add .
-git commit -m "Portfolio Manager v4.5.2 - Multi-target alerts, collapsible sidebars, split history"
+git commit -m "Portfolio Manager v4.6.0 - Dynamic benchmarking, alerts refactor, and performance optimizations"
 git push
-git tag v4.5.2
-git push origin v4.5.2
+git tag v4.6.0
+git push origin v4.6.0
 ```
