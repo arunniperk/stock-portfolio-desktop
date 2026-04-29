@@ -75,10 +75,35 @@ export function NotesModule({T,holdings,onClose}) {
 // Alerts are checked whenever prices refresh
 
 export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
+  const [market,setMarket]=useState('IN');
   const [form,setForm]=useState({symbol:'',name:'',t1:'',t2:'',currency:'INR'});
   const [showAdd,setShowAdd]=useState(false);
   const [editingId,setEditingId]=useState(null);
   const [editForm,setEditForm]=useState({t1:'',t2:''});
+  const [sort,setSort]=useState({col:'symbol',dir:'asc'});
+
+  const handleSort=(col)=>setSort(p=>({col,dir:p.col===col&&p.dir==='asc'?'desc':'asc'}));
+
+  const active=alerts.filter(a=>{
+    const isUsAlert = isUS(a.symbol);
+    return (market==='US' ? isUsAlert : !isUsAlert) && (!a.t1Hit || (a.t2!=null && !a.t2Hit));
+  });
+  const triggered=alerts.filter(a=>{
+    const isUsAlert = isUS(a.symbol);
+    return (market==='US' ? isUsAlert : !isUsAlert) && (a.t1Hit && (a.t2==null || a.t2Hit));
+  });
+
+  const activeRows=useMemo(()=>{
+    const filtered=holdings.filter(h=>{
+      const isUsH=isUS(h.symbol);
+      return (market==='US'?isUsH:!isUsH) && alerts.some(a=>a.symbol===h.symbol && !triggered.some(t=>t.id===a.id));
+    }).map(h=>{
+      const cp=prices[h.symbol]?.current;
+      const prev=prices[h.symbol]?.prev;
+      return {...h, curPrice:cp, dayPct:cp&&prev?((cp-prev)/prev*100):null};
+    });
+    return sortRows(filtered,sort.col,sort.dir);
+  },[holdings,alerts,triggered,market,prices,sort]);
 
   // Check alerts against current prices
   useEffect(()=>{
@@ -154,8 +179,7 @@ export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
   };
 
 
-  const active=alerts.filter(a=>!a.t1Hit || (a.t2!=null && !a.t2Hit));
-  const triggered=alerts.filter(a=>a.t1Hit && (a.t2==null || a.t2Hit));
+
   const INP={padding:'8px 12px',background:T.surface3,border:`1px solid ${T.border2}`,borderRadius:6,color:T.text,fontSize:12,outline:'none',width:'100%',boxSizing:'border-box',fontFamily:'inherit'};
   const tdS={padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontSize:12};
 
@@ -168,9 +192,30 @@ export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
           <div style={{fontSize:13,color:T.text3}}>{active.length} active · {triggered.length} triggered</div>
         </div>
         <div style={{display:'flex',gap:10,alignItems:'center'}}>
-          <NvBtn onClick={()=>setShowAdd(v=>!v)} variant="primary" T={T}><Ic.Plus/> New Alert</NvBtn>
+          <NvBtn onClick={()=>{setShowAdd(v=>!v); if(!showAdd) setForm(p=>({...p, currency:market==='US'?'USD':'INR'}));}} variant="primary" T={T}><Ic.Plus/> New Alert</NvBtn>
           {onClose&&<button onClick={onClose} style={{background:'none',border:`1px solid ${T.border}`,borderRadius:6,cursor:'pointer',color:T.text3,padding:'7px 8px',display:'flex',transition:'all .1s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}><Ic.X/></button>}
         </div>
+      </div>
+
+      {/* Market Tabs */}
+      <div style={{display:'flex',gap:8,borderBottom:`1px solid ${T.border}`,paddingBottom:0,marginBottom:8}}>
+        {[{id:'IN',label:'Indian Stocks',icon:'🇮🇳'},{id:'US',label:'US Stocks',icon:'🇺🇸'}].map(m=>(
+          <button key={m.id} onClick={()=>setMarket(m.id)} style={{
+            background:'none',border:'none',padding:'10px 16px',cursor:'pointer',
+            color:market===m.id?T.accent:T.text3,
+            borderBottom:market===m.id?`2px solid ${T.accent}`:'2px solid transparent',
+            fontSize:13,fontWeight:market===m.id?700:400,transition:'all .15s',
+            display:'flex',alignItems:'center',gap:8,outline:'none'
+          }}>
+            <span>{m.icon}</span> {m.label}
+            <span style={{fontSize:11,background:market===m.id?T.accentBg:T.surface3,color:market===m.id?T.accent:T.text3,padding:'1px 7px',borderRadius:10,fontWeight:600}}>
+              {alerts.filter(a=>{
+                const isUsA=isUS(a.symbol);
+                return (m.id==='US'?isUsA:!isUsA) && (!a.t1Hit || (a.t2!=null && !a.t2Hit));
+              }).length}
+            </span>
+          </button>
+        ))}
       </div>
 
       {showAdd&&(
@@ -181,8 +226,11 @@ export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
             <div style={{marginBottom:14}}>
               <div style={{fontSize:11,color:T.text3,fontWeight:600,marginBottom:6,textTransform:'uppercase',letterSpacing:'.05em'}}>Quick pick from portfolio</div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                {holdings.filter(h=>!alerts.some(a=>a.symbol===h.symbol&&!a.triggered)).map(h=>(
-                  <button key={h.symbol} onClick={()=>{setForm(p=>({...p,symbol:h.symbol,name:h.name,currency:isUS(h.symbol)?'USD':'INR'}));setSrch(h.name);}} style={{padding:'4px 10px',borderRadius:6,border:`1px solid ${T.border2}`,background:T.surface3,color:T.text2,cursor:'pointer',fontSize:11,fontWeight:600,transition:'all .12s',display:'flex',alignItems:'center',gap:4}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border2;e.currentTarget.style.color=T.text2;}}>{short(h.symbol)}</button>
+                {holdings.filter(h=>{
+                  const isUsH=isUS(h.symbol);
+                  return (market==='US'?isUsH:!isUsH) && !alerts.some(a=>a.symbol===h.symbol&&!a.triggered);
+                }).map(h=>(
+                  <button key={h.symbol} onClick={()=>{setForm(p=>({...p,symbol:h.symbol,name:h.name,currency:isUS(h.symbol)?'USD':'INR'}));}} style={{padding:'4px 10px',borderRadius:6,border:`1px solid ${T.border2}`,background:T.surface3,color:T.text2,cursor:'pointer',fontSize:11,fontWeight:600,transition:'all .12s',display:'flex',alignItems:'center',gap:4}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border2;e.currentTarget.style.color=T.text2;}}>{short(h.symbol)}</button>
                 ))}
               </div>
             </div>
@@ -199,7 +247,7 @@ export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
                 style={INP}
               >
                 <option value="">Select Portfolio Stock…</option>
-                {holdings.map(h=><option key={h.symbol} value={h.symbol}>{short(h.symbol)} — {h.name}</option>)}
+                {holdings.filter(h=>market==='US'?isUS(h.symbol):!isUS(h.symbol)).map(h=><option key={h.symbol} value={h.symbol}>{short(h.symbol)} — {h.name}</option>)}
               </select>
             </div>
             <div>
@@ -235,12 +283,20 @@ export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
           </div>
         </div>
         <table style={{width:'100%',borderCollapse:'collapse'}}>
-          <thead><tr style={{background:T.surface3}}>{['Stock','LTP','Buy Price','Day %','Alert Status','Quick Set'].map(h=><th key={h} style={{...tdS,color:T.text3,fontSize:10,fontWeight:700,textAlign:h==='Stock'?'left':'right'}}>{h}</th>)}</tr></thead>
+          <thead>
+            <tr style={{background:T.surface3}}>
+              <SortTh label="Stock" col="symbol" sort={sort} onSort={handleSort} T={T}/>
+              <SortTh label="LTP" col="curPrice" sort={sort} onSort={handleSort} T={T} right/>
+              <SortTh label="Buy Price" col="buyPrice" sort={sort} onSort={handleSort} T={T} right/>
+              <SortTh label="Day %" col="dayPct" sort={sort} onSort={handleSort} T={T} right/>
+              <th style={{...tdS,color:T.text3,fontSize:10,fontWeight:700,textAlign:'right'}}>Alert Status</th>
+              <th style={{...tdS,color:T.text3,fontSize:10,fontWeight:700,textAlign:'right'}}>Quick Set</th>
+            </tr>
+          </thead>
           <tbody>
-            {holdings.filter(h=>alerts.some(a=>a.symbol===h.symbol && !triggered.some(t=>t.id===a.id))).map((h,i)=>{
-              const cp=prices[h.symbol]?.current;
-              const prev=prices[h.symbol]?.prev;
-              const dayPct=cp&&prev?((cp-prev)/prev*100):null;
+            {activeRows.map((h,i)=>{
+              const cp=h.curPrice;
+              const dayPct=h.dayPct;
               const cur=isUS(h.symbol)?'USD':'INR';
               const sym=cur==='USD'?'$':'₹';
               const activeForStock=alerts.filter(a=>a.symbol===h.symbol && (!a.t1Hit || (a.t2!=null && !a.t2Hit)));
@@ -1092,17 +1148,23 @@ export function NewsModule({T,holdings,onClose}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Auto-snapshots on every price refresh. Storage: pm_portfolio_history
 
-export function HistoryModule({T,rows,history,setHistory,onClose}) {
+export function HistoryModule({T,rows,usdInr,history,setHistory,onClose}) {
   const svgRef=useRef();
   const [hover,setHover]=useState(null);
 
   // Called externally on each price refresh to save snapshot (throttled to reduce disk IO)
   useEffect(()=>{
     if(!rows.length)return;
-    const inrVal=Math.round(rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+(r.curValue??r.invested),0));
-    const inrInv=Math.round(rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+r.invested,0));
-    const usdVal=Math.round(rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+(r.curValue??r.invested),0));
-    const usdInv=Math.round(rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+r.invested,0));
+    const inValRaw = rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+(r.curValue??r.invested),0);
+    const usValRaw = rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+(r.curValue??r.invested),0);
+    const inrVal = Math.round(inValRaw + (usValRaw * (usdInr || 83.5)));
+    
+    const inInvRaw = rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+r.invested,0);
+    const usInvRaw = rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+r.invested,0);
+    const inrInv = Math.round(inInvRaw + (usInvRaw * (usdInr || 83.5)));
+    
+    const usdVal = Math.round(usValRaw);
+    const usdInv = Math.round(usInvRaw);
     const today=new Date().toISOString().slice(0,10);
     
     setHistory(prev=>{
@@ -1184,7 +1246,7 @@ export function HistoryModule({T,rows,history,setHistory,onClose}) {
         <div style={{padding:'12px 16px',borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,fontWeight:700,color:T.text}}>Daily Snapshots</span></div>
         <div style={{overflowX:'auto',maxHeight:300,overflowY:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-            <thead style={{position:'sticky',top:0,zIndex:2}}><tr style={{background:T.surface3}}>{['Date','IN Portfolio (₹)','IN Day Chg','US Portfolio ($)','US Day Chg'].map(h=><th key={h} style={{padding:'9px 14px',textAlign:'left',color:T.text3,fontWeight:700,fontSize:11,borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
+            <thead style={{position:'sticky',top:0,zIndex:2}}><tr style={{background:T.surface3}}>{['Date','Total Value (₹)','Day Chg (₹)','US Portfolio ($)','US Day Chg'].map(h=><th key={h} style={{padding:'9px 14px',textAlign:'left',color:T.text3,fontWeight:700,fontSize:11,borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
             <tbody>{[...data].reverse().map((d,i)=>{
               const prev=data[data.length-2-i];
               const inrChg=prev?d.inrVal-prev.inrVal:null;

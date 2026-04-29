@@ -249,7 +249,9 @@ function AppInner() {
         setGroqKey(getItemSync('pm_groq_key') || '');
         setGeminiKey(getItemSync('pm_gemini_key') || '');
         setPrimaryAI(getItemSync('pm_primary_ai') || 'groq');
-        setHistory(JSON.parse(getItemSync('pm_portfolio_history') || '[]'));
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const rawHistory = JSON.parse(getItemSync('pm_portfolio_history') || '[]');
+        setHistory(rawHistory.filter(h => h.date >= todayStr));
         const rawAlerts = JSON.parse(getItemSync('pm_alerts') || '[]');
         setAlerts(rawAlerts.map(a => ({
           ...a,
@@ -644,7 +646,7 @@ Respond ONLY as a JSON object with these keys:
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.6.1</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.6.2</div>
           </div>
         </div>
 
@@ -753,7 +755,7 @@ Respond ONLY as a JSON object with these keys:
             {activeModule==='sectors'&&<SectorModule T={T} rows={allRows} prices={prices} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
             {activeModule==='news'&&<NewsModule T={T} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
             {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr} history={history} onClose={()=>setActiveModule(null)}/>}
-            {activeModule==='history'&&<HistoryModule T={T} rows={allRows} history={history} setHistory={setHistory} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='history'&&<HistoryModule T={T} rows={allRows} usdInr={usdInr} history={history} setHistory={setHistory} onClose={()=>setActiveModule(null)}/>}
           </Suspense>
           {!activeModule&&activeStock?(
             <StockDetailView symbol={activeStock} holding={rows.find(r=>r.symbol===activeStock)} detail={stockDetails[activeStock]} prices={prices} targets={targets} onSaveTarget={saveTarget} onRefresh={()=>fetchStockDetail(activeStock,stockDetails[activeStock]?.range||'3mo')} onRangeChange={(sym,range)=>fetchStockDetail(sym,range)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} aiAnalysis={aiAnalyses[activeStock]} onAIRefresh={(prov)=>{const r=rows.find(r=>r.symbol===activeStock);fetchAIAnalysis(activeStock,r,r?.curPrice,r?.currency,prov);}} T={T}/>
