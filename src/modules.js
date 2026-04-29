@@ -560,15 +560,14 @@ export function BenchmarkModule({T,rows,inRows,usRows,usdInr,history,onClose}) {
       const base=s[0].close;
       out[b.sym]=s.map(d=>({date:toS(d.date),pct:(d.close/base-1)*100}));
     });
-    // Normalize portfolio series
+    // Normalize portfolio series (Absolute Total Return from snapshots)
     const firstBench=Object.values(out)[0];
     if(firstBench?.length>0 && history.length>0){
       const start=firstBench[0].date, end=firstBench[firstBench.length-1].date;
       const hRange=history.filter(h=>h.date>=start && h.date<=end);
       if(hRange.length>0){
-        const baseIN=hRange[0].inrVal, baseUS=hRange[0].usdVal;
-        out['PORT_IN']=hRange.map(h=>({date:h.date,pct:baseIN?(h.inrVal/baseIN-1)*100:0}));
-        out['PORT_US']=hRange.map(h=>({date:h.date,pct:baseUS?(h.usdVal/baseUS-1)*100:0}));
+        out['PORT_IN']=hRange.map(h=>({date:h.date,pct:h.inrInv?((h.inrVal/h.inrInv)-1)*100:0}));
+        out['PORT_US']=hRange.map(h=>({date:h.date,pct:h.usdInv?((h.usdVal/h.usdInv)-1)*100:0}));
       }
     }
     return out;
@@ -1119,7 +1118,9 @@ export function HistoryModule({T,rows,history,setHistory,onClose}) {
   useEffect(()=>{
     if(!rows.length)return;
     const inrVal=Math.round(rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+(r.curValue??r.invested),0));
+    const inrInv=Math.round(rows.filter(r=>r.currency==='INR').reduce((s,r)=>s+r.invested,0));
     const usdVal=Math.round(rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+(r.curValue??r.invested),0));
+    const usdInv=Math.round(rows.filter(r=>r.currency==='USD').reduce((s,r)=>s+r.invested,0));
     const today=new Date().toISOString().slice(0,10);
     
     setHistory(prev=>{
@@ -1128,9 +1129,9 @@ export function HistoryModule({T,rows,history,setHistory,onClose}) {
         // Only update if value changed by more than 0.1% to save performance/disk
         const diff=Math.abs(existing.inrVal-inrVal)/Math.max(existing.inrVal,1);
         if(diff < 0.001) return prev; 
-        return prev.map(p=>p.date===today?{...p,inrVal,usdVal}:p);
+        return prev.map(p=>p.date===today?{...p,inrVal,inrInv,usdVal,usdInv}:p);
       }
-      return [...prev,{date:today,inrVal,usdVal}].slice(-365);
+      return [...prev,{date:today,inrVal,inrInv,usdVal,usdInv}].slice(-365);
     });
   },[rows]);
 
