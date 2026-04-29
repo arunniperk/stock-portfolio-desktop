@@ -229,6 +229,7 @@ function AppInner() {
   const [geminiKey,setGeminiKey]=useState('');
   const [primaryAI,setPrimaryAI]=useState('groq');
   const [history,setHistory]=useState([]);
+  const [alerts,setAlerts]=useState([]);
 
   useEffect(() => {
     // Run after initial mount to keep the UI thread responsive
@@ -249,6 +250,16 @@ function AppInner() {
         setGeminiKey(getItemSync('pm_gemini_key') || '');
         setPrimaryAI(getItemSync('pm_primary_ai') || 'groq');
         setHistory(JSON.parse(getItemSync('pm_portfolio_history') || '[]'));
+        const rawAlerts = JSON.parse(getItemSync('pm_alerts') || '[]');
+        setAlerts(rawAlerts.map(a => ({
+          ...a,
+          t1: a.t1 ?? a.price ?? 0,
+          t1Hit: a.t1Hit ?? a.triggered ?? false,
+          t1HitAt: a.t1HitAt ?? a.triggeredAt ?? null,
+          t2: a.t2 ?? null,
+          t2Hit: a.t2Hit ?? false,
+          t2HitAt: a.t2HitAt ?? null
+        })));
         
         const gKey = getItemSync('pm_groq_key');
         const gmKey = getItemSync('pm_gemini_key');
@@ -292,13 +303,20 @@ function AppInner() {
 
   const handleFinalExit = async (saveBackup) => {
     if (saveBackup) {
-      const csvLines = ["Portfolio,Symbol,Name,Qty,Buy Price"];
+      const csvLines = ["Type,Portfolio/Symbol,Name,Qty/T1,BuyPrice/T2"];
+      // Holdings
       portfolios.forEach(p => {
         p.holdings.forEach(h => {
           const n = h.name.includes(',') ? `"${h.name}"` : h.name;
-          csvLines.push(`${p.name},${h.symbol},${n},${h.qty},${h.buyPrice}`);
+          csvLines.push(`HOLDING,${p.name},${h.symbol},${n},${h.qty},${h.buyPrice}`);
         });
       });
+      // Alerts
+      alerts.forEach(a => {
+        const n = a.name.includes(',') ? `"${a.name}"` : a.name;
+        csvLines.push(`ALERT,${a.symbol},${n},${a.t1},${a.t2||''}`);
+      });
+      
       const csv = csvLines.join('\n');
       const filename = `Portfolio_AutoBackup_${new Date().toISOString().slice(0,10)}_${Date.now()}.csv`;
       await window.electronAPI.fileSave(filename, csv);
@@ -345,6 +363,7 @@ function AppInner() {
   useEffect(()=>{if(isLoaded)setItemSync('pm_right_sidebar_collapsed',JSON.stringify(rightSidebarCollapsed));},[rightSidebarCollapsed,isLoaded]);
   useEffect(()=>{if(isLoaded)setItemSync('pm_tweaks',JSON.stringify(tweaks));},[tweaks,isLoaded]);
   useEffect(()=>{if(isLoaded)setItemSync('pm_portfolio_history',JSON.stringify(history));},[history,isLoaded]);
+  useEffect(()=>{if(isLoaded)setItemSync('pm_alerts',JSON.stringify(alerts));},[alerts,isLoaded]);
   useEffect(()=>{if(window.electronAPI?.onUpdateAvailable)window.electronAPI.onUpdateAvailable(()=>setUpdateAvail(true));},[]);
   const fetchPrices=useCallback(async()=>{
     if(!holdings.length)return;setLoading(true);setError(null);const out={};
@@ -705,7 +724,7 @@ Respond ONLY as a JSON object with these keys:
           <Suspense fallback={<div style={{padding:40,color:T.text3}}>Loading module...</div>}>
             {activeModule==='watchlist'&&<WatchlistModule T={T} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
             {activeModule==='notes'&&<NotesModule T={T} holdings={holdings} onClose={()=>setActiveModule(null)}/>}
-            {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
+            {activeModule==='alerts'&&<AlertsModule T={T} prices={prices} holdings={uniqueHoldings} alerts={alerts} setAlerts={setAlerts} onClose={()=>setActiveModule(null)}/>}
             {activeModule==='sectors'&&<SectorModule T={T} rows={allRows} prices={prices} usdInr={usdInr} onClose={()=>setActiveModule(null)}/>}
             {activeModule==='news'&&<NewsModule T={T} holdings={uniqueHoldings} onClose={()=>setActiveModule(null)}/>}
             {activeModule==='benchmark'&&<BenchmarkModule T={T} rows={rows} inRows={inRows} usRows={usRows} usdInr={usdInr} history={history} onClose={()=>setActiveModule(null)}/>}

@@ -74,28 +74,11 @@ export function NotesModule({T,holdings,onClose}) {
 // Storage: pm_alerts = [{id,symbol,name,direction,price,currency,triggered,triggeredAt}]
 // Alerts are checked whenever prices refresh
 
-export function AlertsModule({T,prices,holdings,onClose}) {
-  const [alerts,setAlerts]=useState(()=>{
-    try{
-      const raw=JSON.parse(getItemSync('pm_alerts')||'[]');
-      // Migration: convert old 'price' to 't1'
-      return raw.map(a=>({
-        ...a,
-        t1: a.t1??a.price??0,
-        t1Hit: a.t1Hit??a.triggered??false,
-        t1HitAt: a.t1HitAt??a.triggeredAt??null,
-        t2: a.t2??null,
-        t2Hit: a.t2Hit??false,
-        t2HitAt: a.t2HitAt??null
-      }));
-    }catch{return [];}
-  });
+export function AlertsModule({T,prices,holdings,alerts,setAlerts,onClose}) {
   const [form,setForm]=useState({symbol:'',name:'',t1:'',t2:'',currency:'INR'});
   const [showAdd,setShowAdd]=useState(false);
   const [editingId,setEditingId]=useState(null);
   const [editForm,setEditForm]=useState({t1:'',t2:''});
-
-  useEffect(()=>{setItemSync('pm_alerts',JSON.stringify(alerts));},[alerts]);
 
   // Check alerts against current prices
   useEffect(()=>{
