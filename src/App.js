@@ -592,7 +592,12 @@ Respond ONLY as a JSON object with these keys:
     {id:'history',   label:'History',  icon:'📈', color:'#f97316'},
   ];
 
-  if(!isLoaded) return <div style={{height:'100vh',background:T.bg,display:'flex',alignItems:'center',justifyContent:'center',color:T.accent,fontSize:20,fontWeight:700,fontFamily:'Orbitron, sans-serif',letterSpacing:'.1em',textShadow:`0 0 20px ${T.accent}60`}}>ORBITRON PORTFOLIO...</div>;
+  if(!isLoaded) return (
+    <div style={{height:'100vh',background:T.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:24}}>
+      <img src="./logo.png" style={{width:120,height:120,borderRadius:24,boxShadow:`0 0 40px ${T.accent}30`,animation:'pulse 2s infinite'}} alt="Logo"/>
+      <div style={{color:T.accent,fontSize:20,fontWeight:700,fontFamily:'Orbitron, sans-serif',letterSpacing:'.1em',textShadow:`0 0 20px ${T.accent}60`}}>ORBITRON PORTFOLIO...</div>
+    </div>
+  );
 
   return(
     <div style={{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',background:T.bg,height:'100vh',display:'flex',flexDirection:'column',color:T.text,overflow:'hidden'}}>
@@ -614,8 +619,8 @@ Respond ONLY as a JSON object with these keys:
           <button onClick={()=>setSidebarCollapsed(v=>!v)} style={{background:'none',border:'none',color:T.text3,cursor:'pointer',padding:4,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:4,transition:'all .1s'}} onMouseEnter={e=>e.currentTarget.style.color=T.accent} onMouseLeave={e=>e.currentTarget.style.color=T.text3}>
             <Ic.Menu/>
           </button>
-          <div style={{width:32,height:32,borderRadius:8,background:T.accent,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          <div style={{width:28,height:28,borderRadius:6,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:`0 0 10px ${T.accent}40`,background:T.surface4}}>
+            <img src="./logo.png" style={{width:'100%',height:'100%',objectFit:'cover'}} alt="P"/>
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
