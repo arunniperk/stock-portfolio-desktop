@@ -367,23 +367,42 @@ function AppInner() {
   useEffect(()=>{if(window.electronAPI?.onUpdateAvailable)window.electronAPI.onUpdateAvailable(()=>setUpdateAvail(true));},[]);
   const fetchPrices=useCallback(async()=>{
     if(!holdings.length)return;setLoading(true);setError(null);const out={};
-    await Promise.all(holdings.map(async h=>{try{const res=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(h.symbol)}?interval=1d&range=1d`,{headers:{Accept:'application/json'}});if(!res.ok)throw new Error();const json=await res.json();const meta=json?.chart?.result?.[0]?.meta;if(meta?.regularMarketPrice){out[h.symbol]={current:meta.regularMarketPrice,prev:meta.chartPreviousClose??meta.regularMarketPrice,currency:meta.currency??(isUS(h.symbol)?'USD':'INR')};}else out[h.symbol]=null;}catch{out[h.symbol]=null;}}));
-    // FIX #1: Use pricesRef to avoid stale closure / infinite re-render loop
+    const pFetch = async (url, options={}) => {
+      if(window.electronAPI?.netFetch){
+        try {
+          const text = await window.electronAPI.netFetch(url, options);
+          return text ? JSON.parse(text) : null;
+        } catch { return null; }
+      }
+      try {
+        const r = await fetch(url, options);
+        return await r.json();
+      } catch { return null; }
+    };
+
+    await Promise.all(holdings.map(async h=>{
+      try{
+        const json = await pFetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(h.symbol)}?interval=1d&range=1d`);
+        const meta=json?.chart?.result?.[0]?.meta;
+        if(meta?.regularMarketPrice){
+          out[h.symbol]={current:meta.regularMarketPrice,prev:meta.chartPreviousClose??meta.regularMarketPrice,currency:meta.currency??(isUS(h.symbol)?'USD':'INR')};
+        }else out[h.symbol]=null;
+      }catch{out[h.symbol]=null;}
+    }));
+
     setPrices(prev=>{
       const merged={...prev};
       let anyNew=false;
-      for(const [sym,val] of Object.entries(out)){
-        if(val){merged[sym]=val;anyNew=true;}
-      }
-      if(!anyNew&&holdings.length){
-        setError('Live prices unavailable — showing last known prices.');
-      } else {
-        setError(null);
-      }
-      return merged;
+      Object.keys(out).forEach(sym=>{
+        if(JSON.stringify(out[sym])!==JSON.stringify(prev[sym])){
+          merged[sym]=out[sym];
+          anyNew=true;
+        }
+      });
+      return anyNew ? merged : prev;
     });
     setLastUpdated(new Date());setLoading(false);
-  },[holdings]); // FIX #1: removed 'prices' from deps — uses functional setPrices instead
+  },[holdings]); 
   useEffect(()=>{
     fetchPrices();
     const ms=(tweaks.autoRefreshMins||5)*60*1000;
@@ -393,13 +412,22 @@ function AppInner() {
   },[fetchPrices,tweaks.autoRefreshMins]);
   const fetchStockDetail=useCallback(async(symbol,range='3mo')=>{
     setStockDetails(prev=>({...prev,[symbol]:{...prev[symbol],loading:true,range}}));
+    const pFetch = async (url, options={}) => {
+      if(window.electronAPI?.netFetch){
+        try {
+          const text = await window.electronAPI.netFetch(url, options);
+          return text ? JSON.parse(text) : null;
+        } catch { return null; }
+      }
+      try {
+        const r = await fetch(url, options);
+        return await r.json();
+      } catch { return null; }
+    };
+
     try{
       // ── 1. Chart API — history + meta (52W, marketCap, volume) ──────────────
-      const chartRes=await fetch(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}&includePrePost=false`,
-        {headers:{Accept:'application/json'}}
-      );
-      const cj=await chartRes.json();
+      const cj = await pFetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}&includePrePost=false`);
       const result=cj?.chart?.result?.[0]||{};
       const meta=result.meta||{};
       const ts=result.timestamp||[],q=result.indicators?.quote?.[0]||{};
@@ -413,47 +441,26 @@ function AppInner() {
       let qd={};  // v7 quote data
       let qs={};  // v10 quoteSummary data
 
-      // Try v10 quoteSummary (best structured data, works without cookies)
+      // Try v10 quoteSummary
       for(const host of ['query1','query2']){
-        try{
-          const r=await fetch(
-            `https://${host}.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=summaryDetail,defaultKeyStatistics,financialData,price`,
-            {headers:{Accept:'application/json'}}
-          );
-          if(r.ok){
-            const j=await r.json();
-            const res=j?.quoteSummary?.result?.[0];
-            if(res){qs=res;break;}
-          }
-        }catch{}
+        const j = await pFetch(`https://${host}.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=summaryDetail,defaultKeyStatistics,financialData,price`);
+        const res=j?.quoteSummary?.result?.[0];
+        if(res){qs=res;break;}
       }
 
-      // Try v7 quote as supplementary (good for marketCap, volume, 52W)
+      // Try v7 quote
       for(const host of ['query1','query2']){
-        try{
-          const r=await fetch(
-            `https://${host}.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US`,
-            {headers:{Accept:'application/json'}}
-          );
-          if(r.ok){
-            const j=await r.json();
-            const res=j?.quoteResponse?.result?.[0];
-            if(res?.symbol){qd=res;break;}
-          }
-        }catch{}
+        const j = await pFetch(`https://${host}.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&lang=en-US&region=US`);
+        const res=j?.quoteResponse?.result?.[0];
+        if(res?.symbol){qd=res;break;}
       }
 
       // ── 3. Tickertape fallback for Indian Stocks ───────────────────────────
       let ttData={};
       if(symbol.endsWith('.NS')||symbol.endsWith('.BO')){
         const sid=symbol.split('.')[0];
-        try{
-          const r=await fetch(`https://api.tickertape.in/stocks/info/${sid}`);
-          if(r.ok){
-            const j=await r.json();
-            if(j?.success && j?.data) ttData=j.data;
-          }
-        }catch{}
+        const j = await pFetch(`https://api.tickertape.in/stocks/info/${sid}`);
+        if(j?.success && j?.data) ttData=j.data;
       }
 
       // ── 4. Merge all sources — v10 wins for fundamentals ────────────────────

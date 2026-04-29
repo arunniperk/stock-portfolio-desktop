@@ -124,6 +124,24 @@ ipcMain.handle('file-save', async (_event, name, data) => {
   }
 });
 
+ipcMain.handle('net-fetch', async (_event, url, options = {}) => {
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://finance.yahoo.com/',
+        ...(options.headers || {})
+      }
+    });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch (e) {
+    console.error('net-fetch error:', e);
+    return null;
+  }
+});
+
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   createWindow();

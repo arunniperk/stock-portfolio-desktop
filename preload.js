@@ -26,5 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAppClosing:  (cb) => ipcRenderer.on('app-closing', () => cb()),
   // renderer → main: "all writes are done, safe to quit"
   flushComplete: ()   => ipcRenderer.send('flush-complete'),
+
+  // Secure cross-origin fetch via main process
+  netFetch:      (url, options) => ipcRenderer.invoke('net-fetch', url, options),
 });
 
