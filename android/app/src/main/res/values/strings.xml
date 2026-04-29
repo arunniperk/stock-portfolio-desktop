@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Stock Portfolio Monitor</string>
-    <string name="title_activity_main">Stock Portfolio Monitor</string>
-    <string name="package_name">com.portfolio.android</string>
-    <string name="custom_url_scheme">com.portfolio.android</string>
-</resources>

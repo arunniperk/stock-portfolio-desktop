@@ -11,18 +11,12 @@
     "dist:win": "electron-builder --win --x64"
   },
   "dependencies": {
-    "@capacitor/android": "^8.3.1",
-    "@capacitor/cli": "^8.3.1",
-    "@capacitor/core": "^8.3.1",
-    "@capacitor/splash-screen": "^8.0.1",
-    "@capacitor/status-bar": "^8.0.2",
     "electron-updater": "^6.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
     "@vitejs/plugin-react": "^4.3.0",
     "electron": "^41.2.2",
     "electron-builder": "^26.8.1",
