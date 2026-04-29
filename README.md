@@ -14,6 +14,7 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 - **CSV & XLSX export** — Full metrics in both formats
 - **CSV import** — Drag-and-drop with column auto-detection
 - **Collapsible UI** — Hide left/right sidebars for maximum focus on your portfolio grid
+- **Window Management** — Standardized Minimize, Maximize, and Close controls for the frameless desktop environment
 
 ### Stock Detail Tab
 - **Click any stock** to open a dedicated analysis tab
@@ -37,10 +38,10 @@ A high-performance **Windows 11 desktop application** for managing personal stoc
 |---|---|
 | 👁 **Watchlist** | Track stocks with target entry/exit prices. Highlights near-entry (amber) and target-hit (green). Notes field. CSV export. |
 | 📝 **Notes** | Per-stock notes/rationale. Card view of all annotated stocks. Edit in-place. |
-| 🔔 **Price Alerts** | Set dual price targets (**Target 1** & **Target 2**) per stock. Sequential hit tracking. Inline editing to reset targets after they are met. Browser notifications. |
+| 🔔 **Price Alerts** | Manage alerts with a direct portfolio stock dropdown. Set dual price targets (**Target 1** & **Target 2**) per stock with automatic direction detection. Bulk-delete alerts per stock. |
 | 🏭 **Sectors** | Group holdings by sector. All values unified in INR. **Total Portfolio Value** shown in INR. Interactive donut chart. Fetches sector from Yahoo Finance. |
 | 📰 **News** | Latest news from Yahoo Finance for portfolio stocks + market indices. Thumbnails, publisher, time-ago. Filter: All / Portfolio / Market. |
-| 📊 **Benchmark** | Compare Indian portfolio vs Nifty 50, US portfolio vs S&P 500 over 1M/3M/6M/1Y. Performance table with invested/current/return. |
+| 📊 **Benchmark** | Compare portfolio performance vs Nifty 50 and S&P 500 using **dynamic time-series graphs**. Standardized date normalization for accurate comparative analysis. |
 | 📈 **History** | Auto-snapshots portfolio value daily on each price refresh. Split **IN Day Change** and **US Day Change** columns. Line chart + daily table. |
 
 ---
