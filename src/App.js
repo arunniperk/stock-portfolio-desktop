@@ -443,27 +443,40 @@ function AppInner() {
         }catch{}
       }
 
-      // ── 3. Merge all sources — v10 wins for fundamentals ────────────────────
-      const sd=qs.summaryDetail||{}, fd=qs.financialData||{}, ks=qs.defaultKeyStatistics||{}, pd=qs.price||{};
+      // ── 3. Tickertape fallback for Indian Stocks ───────────────────────────
+      let ttData={};
+      if(symbol.endsWith('.NS')||symbol.endsWith('.BO')){
+        const sid=symbol.split('.')[0];
+        try{
+          const r=await fetch(`https://api.tickertape.in/stocks/info/${sid}`);
+          if(r.ok){
+            const j=await r.json();
+            if(j?.success && j?.data) ttData=j.data;
+          }
+        }catch{}
+      }
+
+      // ── 4. Merge all sources — v10 wins for fundamentals ────────────────────
+      const sd=qs.summaryDetail||{}, fd=qs.financialData||{}, ks=qs.defaultKeyStatistics||{}, pd=qs.price||{}, ttRatios=ttData.ratios||{};
       const betaVal=n(sd.beta)??n(ks.beta)??n(qd.beta)??n(qd.beta3Year)??n(meta.beta);
-      const divYield=n(sd.dividendYield)??n(sd.trailingAnnualDividendYield)??n(qd.trailingAnnualDividendYield);
+      const divYield=n(sd.dividendYield)??n(sd.trailingAnnualDividendYield)??n(qd.trailingAnnualDividendYield)??(ttRatios.divYield?ttRatios.divYield/100:null);
       const summary={
         price:{
-          marketCap:           n(pd.marketCap)??n(qd.marketCap)??n(meta.marketCap),
+          marketCap:           n(pd.marketCap)??n(qd.marketCap)??n(meta.marketCap)??(ttRatios.marketCap?ttRatios.marketCap*1e7:null),
           regularMarketVolume: n(pd.regularMarketVolume)??n(qd.regularMarketVolume)??n(meta.regularMarketVolume),
           shortName:           pd.shortName??qd.shortName??meta.shortName,
           recommendationKey:   fd.recommendationKey??qd.recommendationKey,
           targetMeanPrice:     n(fd.targetMeanPrice)??n(qd.targetMeanPrice),
         },
         summaryDetail:{
-          trailingPE:       n(sd.trailingPE)??n(qd.trailingPE),
+          trailingPE:       n(sd.trailingPE)??n(qd.trailingPE)??n(ttRatios.ttmPe),
           fiftyTwoWeekHigh: n(sd.fiftyTwoWeekHigh)??n(qd.fiftyTwoWeekHigh)??n(meta.fiftyTwoWeekHigh),
           fiftyTwoWeekLow:  n(sd.fiftyTwoWeekLow)??n(qd.fiftyTwoWeekLow)??n(meta.fiftyTwoWeekLow),
           beta:             betaVal,
           dividendYield:    divYield,
         },
         defaultKeyStatistics:{
-          trailingEps:             n(ks.trailingEps)??n(qd.epsTrailingTwelveMonths),
+          trailingEps:             n(ks.trailingEps)??n(qd.epsTrailingTwelveMonths)??n(ttRatios.eps),
           numberOfAnalystOpinions: n(ks.numberOfAnalystOpinions)??n(qd.numberOfAnalystOpinions),
         },
         financialData:{
