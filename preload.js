@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storageRead:  (key)        => ipcRenderer.invoke('storage-read',  key),
   storageWrite: (key, value) => ipcRenderer.invoke('storage-write', key, value),
 
+  // Generic file saving (any name in Documents\Portfolio)
+  fileSave:     (name, data) => ipcRenderer.invoke('file-save', name, data),
+
   // Graceful-close handshake
   // main → renderer: "please flush your storage now"
   onAppClosing:  (cb) => ipcRenderer.on('app-closing', () => cb()),

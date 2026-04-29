@@ -4,7 +4,7 @@ import { mkT, PIE, PORT_COLORS, DEF_PF, TWEAK_DEF } from './theme';
 import { Ic } from './icons';
 import { callGroq, callGemini, callAI, extractJSON } from './ai';
 import { useYahooSearch, useNotes } from './hooks';
-import { getItemSync, setItemSync } from './storage';
+import { getItemSync, setItemSync, flushAll } from './storage';
 import './mobile.css';
 
 // ── ERROR BOUNDARY ────────────────────────────────────────────────────────────
@@ -282,6 +282,30 @@ function AppInner() {
   const isElectron = !!window.electronAPI;
   const isCapacitor = false;
   const isMobile = window.innerWidth < 768;
+  const [isClosing, setIsClosing] = useState(false);
+
+  useEffect(() => {
+    if (window.electronAPI?.onAppClosing) {
+      window.electronAPI.onAppClosing(() => setIsClosing(true));
+    }
+  }, []);
+
+  const handleFinalExit = async (saveBackup) => {
+    if (saveBackup) {
+      const csvLines = ["Portfolio,Symbol,Name,Qty,Buy Price"];
+      portfolios.forEach(p => {
+        p.holdings.forEach(h => {
+          const n = h.name.includes(',') ? `"${h.name}"` : h.name;
+          csvLines.push(`${p.name},${h.symbol},${n},${h.qty},${h.buyPrice}`);
+        });
+      });
+      const csv = csvLines.join('\n');
+      const filename = `Portfolio_AutoBackup_${new Date().toISOString().slice(0,10)}_${Date.now()}.csv`;
+      await window.electronAPI.fileSave(filename, csv);
+    }
+    await flushAll();
+    window.electronAPI.flushComplete();
+  };
 
   // Fetch USD/INR rate from Yahoo Finance
   useEffect(()=>{
@@ -715,6 +739,21 @@ Respond ONLY as a JSON object with these keys:
       {showSettings&&<SettingsPanel tweaks={tweaks} onUpdate={(k,v)=>setTweaks(p=>({...p,[k]:v}))} onClose={()=>setShowSettings(false)} groqKey={groqKey} geminiKey={geminiKey} primaryAI={primaryAI} onSaveAIKeys={saveAIKeys} T={T}/>}
       {importModal&&<CSVImportModal market={importModal} onImport={importHoldings} onClose={()=>setImportModal(null)} T={T}/>}
       {isMobile && <BottomNav activeId={mainTab} activeModule={activeModule} onSwitch={(id) => {if(id==='IN'||id==='US'){setMainTab(id);setActiveModule(null);}else{setActiveModule(id);}}} T={T} NAV={NAV} MOD_NAV={MOD_NAV}/>}
+
+      {isClosing && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',backdropFilter:'blur(8px)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div style={{background:T.surface,border:`1px solid ${T.accent}40`,borderRadius:16,padding:32,maxWidth:440,width:'100%',textAlign:'center',boxShadow:`0 24px 64px rgba(0,0,0,0.6), 0 0 40px ${T.accent}15`}}>
+            <div style={{width:64,height:64,background:T.accentBg,borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px',color:T.accent,fontSize:28}}>💾</div>
+            <h2 style={{fontSize:20,fontWeight:700,color:T.text,marginBottom:12}}>Save Backup before Exit?</h2>
+            <p style={{fontSize:14,color:T.text3,lineHeight:1.6,marginBottom:24}}>To prevent data loss, your current portfolio state will be saved as a CSV file in your Portfolio folder.</p>
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              <button onClick={() => handleFinalExit(true)} style={{width:'100%',padding:'14px',background:T.accent,border:'none',borderRadius:8,color:'#000',fontWeight:700,cursor:'pointer',fontSize:14,transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.transform='scale(1.02)'} onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}>Save CSV & Exit</button>
+              <button onClick={() => handleFinalExit(false)} style={{width:'100%',padding:'10px',background:'transparent',border:`1px solid ${T.border}`,borderRadius:8,color:T.text3,fontWeight:600,cursor:'pointer',fontSize:13}} onMouseEnter={e=>{e.currentTarget.style.borderColor=T.danger;e.currentTarget.style.color=T.danger;}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text3;}}>Exit without Backup</button>
+              <button onClick={() => setIsClosing(false)} style={{width:'100%',padding:'10px',background:'transparent',border:'none',borderRadius:8,color:T.text3,fontWeight:400,cursor:'pointer',fontSize:12}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

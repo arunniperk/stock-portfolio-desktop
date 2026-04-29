@@ -112,6 +112,18 @@ ipcMain.handle('storage-write', async (_event, key, value) => {
   }
 });
 
+ipcMain.handle('file-save', async (_event, name, data) => {
+  try {
+    if (!fs.existsSync(DATA_DIR)) await fs.promises.mkdir(DATA_DIR, { recursive: true });
+    const file = path.join(DATA_DIR, name);
+    await fs.promises.writeFile(file, data, 'utf8');
+    return true;
+  } catch (e) {
+    console.error('file-save error:', e);
+    return false;
+  }
+});
+
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   createWindow();
