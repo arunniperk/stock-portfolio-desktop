@@ -576,7 +576,7 @@ Respond ONLY as a JSON object with these keys:
           </div>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,letterSpacing:'-.01em'}}>Portfolio Manager</div>
-            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.5.2</div>
+            <div style={{fontSize:10,color:T.text3,marginTop:1}}>Arun Verma · v4.6.0</div>
           </div>
         </div>
 
